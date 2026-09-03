@@ -128,10 +128,10 @@
       "streaming": "স্ট্রিমিং হচ্ছে"
     },
     "chatMessageList": {
+      "open_path": "{{path}} খোলো",
       "copied": "কপি হয়েছে!",
       "copy": "কপি করুন",
       "copy_failed": "কপি ব্যর্থ হয়েছে",
-      "open_path": "{{path}} খোলো",
       "show_less": "কম দেখান",
       "show_more": "আরও দেখান"
     }
@@ -4784,8 +4784,6 @@
         "folder_delete_failed": "ফোল্ডারটি মুছে ফেলা যায়নি।",
         "folder_create_failed": "ফোল্ডারটি তৈরি করা যায়নি।",
         "folder_bad_name": "এই ফোল্ডারের নামে এমন অক্ষর আছে যা ড্রাইভ সংরক্ষণ করতে পারে না। অক্ষর, সংখ্যা, স্পেস এবং . _ - ( ) + @ = নিরাপদ।",
-        "folder_deleted_one": "“{{name}}” মুছে ফেলা হয়েছে: {{count}}টি আইটেম।",
-        "folder_deleted_other": "“{{name}}” মুছে ফেলা হয়েছে: {{count}}টি আইটেম।",
         "cancel": "বাতিল",
         "load_more": "আরও দেখুন",
         "stat_this_month": "এই মাসে",
@@ -4877,7 +4875,6 @@
         "access_forget_failed": "ওই লিংকটি তালিকা থেকে সরানো যায়নি। এটি এখনও তালিকায় আছে।",
         "keys_count_one": "{{count}}টি কী",
         "keys_count_other": "{{count}}টি কী",
-        "keys_for_account": "{{name}}-এর কী",
         "key_healthy": "সুস্থ",
         "parent_folders": "প্যারেন্ট ফোল্ডার",
         "folder_actions": "ফোল্ডারের কাজ",
@@ -4939,6 +4936,9 @@
         "rename_shared": "এই ফাইলের একটি সক্রিয় শেয়ার লিঙ্ক আছে — নাম বদলালে লিঙ্কটি ভেঙে যাবে। শেয়ারটি সরান (বা মেয়াদ শেষ হতে দিন) এবং আবার চেষ্টা করুন।",
         "rename_failed": "ফাইলের নাম বদলানো যায়নি। আবার চেষ্টা করুন।",
         "rename_failed_named": "“{{name}}” এর নাম বদলানো যায়নি: {{reason}}",
+        "folder_deleted_one": "“{{name}}” মুছে ফেলা হয়েছে: {{count}}টি আইটেম।",
+        "folder_deleted_other": "“{{name}}” মুছে ফেলা হয়েছে: {{count}}টি আইটেম।",
+        "keys_for_account": "{{name}}-এর কী",
         "library_add_empty": "এখনো কোনো আর্টিফ্যাক্ট নেই। Kiro আপনার জন্য যা তৈরি করবে তা এখানে দেখা যাবে, ক্লাউডে কপি করার জন্য প্রস্তুত।",
         "move_to": "ফোল্ডারে সরান…",
         "move_title": "“{{name}}” সরান",
@@ -5147,17 +5147,10 @@
       "axis_tile": "পটভূমি",
       "cancel": "বাতিল",
       "customized_note": "কাস্টম মুখ ব্যবহার হচ্ছে",
-      "edit_avatar": "অবতার সম্পাদনা করুন",
-      "expr_hint": "প্রতিটি মুহূর্তের জন্য আলাদা মুখ আর শব্দ বেছে নিন।",
-      "expr_picture_note": "ছবির বদলানোর মতো কোনো মুখ নেই, তাই শুধু শব্দই কাজ করে।",
-      "expr_reset_state": "রিসেট",
-      "expr_sound": "শব্দ",
       "field_hint": "এই সদস্য যেখানে দেখা যায় সেখানে এই মুখ।",
       "field_label": "অবতার",
-      "hint_customize": "এই অবতারটি সম্পাদনা করুন",
       "image_load_failed": "সংরক্ষিত ছবি লোড করা যায়নি — ডিফল্ট মুখ দেখানো হচ্ছে।",
       "mirror": "দিক উল্টান",
-      "mode_expressions": "অভিব্যক্তি",
       "mode_face": "ঘোস্ট মুখ",
       "mode_picture": "ছবি",
       "opt_angry": "রাগী",
@@ -5189,7 +5182,6 @@
       "opt_party": "পার্টি টুপি",
       "opt_phones": "হেডফোন",
       "opt_raised": "উঁচু",
-      "opt_same_as_idle": "যেমন সবসময়",
       "opt_sleepy": "ঘুমঘুম",
       "opt_smile": "হাসি",
       "opt_smirk": "বাঁকা হাসি",
@@ -5206,16 +5198,6 @@
       "opt_wrench": "রেঞ্চ",
       "randomize": "এলোমেলো",
       "reset_default": "ডিফল্ট মুখে রিসেট করুন",
-      "sound_blip": "ব্লিপ",
-      "sound_chime": "চাইম",
-      "sound_ding": "ডিং",
-      "sound_pop": "পপ",
-      "sound_preview": "এই শব্দ শুনুন",
-      "sound_pulse": "পালস",
-      "sound_silent": "কোনো শব্দ নেই",
-      "state_done": "সম্পন্ন",
-      "state_error": "ব্যর্থ",
-      "state_working": "কাজ করছে",
       "tile_amber": "অ্যাম্বার",
       "tile_bronze": "ব্রোঞ্জ",
       "tile_coral": "প্রবাল",
@@ -5237,7 +5219,25 @@
       "upload_choose": "ছবি বেছে নিন…",
       "upload_hint": "এখানে ছবি টেনে আনুন, অথবা",
       "upload_note": "PNG, JPEG বা WEBP। সংরক্ষণের আগে বর্গাকারে ছাঁটা হয় এবং 512 px-এ ছোট করা হয়।",
-      "upload_too_large": "ফাইলটি খুব বড় (সর্বোচ্চ 20 MB)।"
+      "upload_too_large": "ফাইলটি খুব বড় (সর্বোচ্চ 20 MB)।",
+      "expr_hint": "প্রতিটি মুহূর্তের জন্য আলাদা মুখ আর শব্দ বেছে নিন।",
+      "expr_picture_note": "ছবির বদলানোর মতো কোনো মুখ নেই, তাই শুধু শব্দই কাজ করে।",
+      "expr_reset_state": "রিসেট",
+      "expr_sound": "শব্দ",
+      "mode_expressions": "অভিব্যক্তি",
+      "opt_same_as_idle": "যেমন সবসময়",
+      "sound_blip": "ব্লিপ",
+      "sound_chime": "চাইম",
+      "sound_ding": "ডিং",
+      "sound_pop": "পপ",
+      "sound_preview": "এই শব্দ শুনুন",
+      "sound_pulse": "পালস",
+      "sound_silent": "কোনো শব্দ নেই",
+      "state_done": "সম্পন্ন",
+      "state_error": "ব্যর্থ",
+      "state_working": "কাজ করছে",
+      "edit_avatar": "অবতার সম্পাদনা করুন",
+      "hint_customize": "এই অবতারটি সম্পাদনা করুন"
     },
     "crashNotice": {
       "diagnostics_were_saved_locally": "এই ডিভাইসে {{n}}টি নতুন ক্র্যাশ রেকর্ড সংরক্ষণ করা হয়েছে। সমস্যাটি রিপোর্ট করার সময় সেগুলি সংযুক্ত করুন।",
@@ -5256,12 +5256,12 @@
       "pause_named": "{{name}} বিরতি দিন",
       "paused": "বিরতিতে",
       "resume_named": "{{name}} আবার শুরু করুন",
-      "retry": "আবার চেষ্টা করুন",
       "run_named_now": "{{name}} এখনই চালান",
       "running": "চলছে",
       "schedule": "সময়সূচি",
       "schedules_that_run_this_crew_without_you_asking": "যে সময়সূচিগুলো আপনি না বললেও এই এজেন্ট চালায়। উপরের Triggers থেকে আলাদা, যা কেবল ঠিক করে অর্কেস্ট্রেটর কখন এই এজেন্ট বেছে নেবে।",
-      "what_wakes_this_crew": "এই এজেন্টকে কী জাগায়"
+      "what_wakes_this_crew": "এই এজেন্টকে কী জাগায়",
+      "retry": "আবার চেষ্টা করুন"
     },
     "kiroAccountModal": {
       "account_details_unavailable": "অ্যাকাউন্টের বিবরণ পাওয়া যাচ্ছে না",
@@ -5589,16 +5589,16 @@
       "next_cycle_due": "পরবর্তী চক্র অপেক্ষমাণ, বর্তমান টার্নের পরে চলবে",
       "next_cycle_in": "পরবর্তী চক্র {{time}} পরে",
       "next_cycle_unscheduled": "পরবর্তী চক্র এখনও নির্ধারিত নয়",
-      "retry": "আবার চেষ্টা করুন",
       "save": "সেভ করো",
       "seconds_between_nudges": "নাজের মধ্যে সেকেন্ড",
       "set_a_goal": "একটি লক্ষ্য নির্ধারণ করুন",
       "start_loop": "লুপ শুরু করো",
       "stop_loop": "লুপ বন্ধ করুন",
-      "watches_load_failed": "এই সেশনের ওয়াচগুলো লোড করা যায়নি।",
       "watches_next": "পরবর্তী",
       "watches_note": "প্রকৃত সংকেত পেলেই এজেন্টকে জাগায়। সময়সূচি পৃষ্ঠায় পরিচালনা করুন।",
-      "watches_title": "টোকেন-মুক্ত পর্যবেক্ষণ"
+      "watches_title": "টোকেন-মুক্ত পর্যবেক্ষণ",
+      "retry": "আবার চেষ্টা করুন",
+      "watches_load_failed": "এই সেশনের ওয়াচগুলো লোড করা যায়নি।"
     },
     "bottomTerminalPanel": {
       "close_terminal": "টার্মিনাল বন্ধ করুন",
@@ -5645,9 +5645,6 @@
       "could_not_submit_that_decision_see_the_console_f": "সেই সিদ্ধান্ত জমা দেওয়া যায়নি — বিস্তারিত জানতে কনসোল দেখো।",
       "detached_head_at": "{{branch}}-এ detached HEAD",
       "drag_to_resize_double_click_to_reset": "আকার বদলাতে টানুন (রিসেট করতে ডাবল-ক্লিক করুন)",
-      "collapse_composer": "বার্তা ইনপুট সংকুচিত করুন",
-      "collapse_composer_desc": "উত্তরের জন্য জায়গা করতে বক্সটি লুকায়; খসড়া সংরক্ষিত থাকে",
-      "expand_composer": "বার্তা ইনপুট দেখান",
       "file": "ফাইল",
       "force_kill_discards_in_progress_work_and_queued": "জোর করে বন্ধ — চলমান কাজ ও সারিতে থাকা বার্তা বাতিল করে",
       "force_kill_session_discards_in_progress_work_and": "জোর করে সেশন বন্ধ করুন (চলমান কাজ ও সারিতে থাকা বার্তা বাতিল হয়)",
@@ -5728,6 +5725,9 @@
       "following_global": "গ্লোবাল অনুসরণ করছে ({{pct}}%)",
       "sketch": "স্কেচ",
       "sketch_desc": "স্কেচ আঁকুন; ছবি এবং সম্পাদনাযোগ্য উৎস সংযুক্ত করে",
+      "collapse_composer": "বার্তা ইনপুট সংকুচিত করুন",
+      "collapse_composer_desc": "উত্তরের জন্য জায়গা করতে বক্সটি লুকায়; খসড়া সংরক্ষিত থাকে",
+      "expand_composer": "বার্তা ইনপুট দেখান",
       "optimize_failed": "প্রম্পট অপ্টিমাইজ করা যায়নি। আপনার মূল লেখা পুনরুদ্ধার করা হয়েছে।",
       "optimize_failed_elsewhere": "অন্য সেশনে শুরু করা প্রম্পট অপ্টিমাইজ করা যায়নি। সেখানে মূল লেখা পুনরুদ্ধার করা হয়েছে।",
       "more_actions": "আরও অ্যাকশন",
@@ -5742,14 +5742,14 @@
       "earlier_messages_open_session": "পূর্ববর্তী বার্তা — সম্পূর্ণ সেশন খুলুন (বিভক্ত ভিউ বন্ধ হবে)",
       "earlier_messages_unavailable": "পূর্ববর্তী বার্তাগুলি এই সেশনের ইতিহাসে আর পাওয়া যাচ্ছে না।",
       "forked_from": "{{name}} থেকে ফর্ক করা হয়েছে",
-      "history_load_failed": "এই সেশনের বার্তা লোড করা যায়নি।",
       "model_list": "মডেল তালিকা",
-      "retry": "আবার চেষ্টা করুন",
       "session_ready_type_a_message_to_start": "সেশন প্রস্তুত। শুরু করতে একটি বার্তা লিখুন।",
       "split_down": "নিচে ভাগ করুন",
       "split_right": "ডানে ভাগ করুন",
       "split_right_d": "ডানে ভাগ করুন (⌘D)",
-      "type_to_filter": "ফিল্টার করতে লিখুন…"
+      "type_to_filter": "ফিল্টার করতে লিখুন…",
+      "history_load_failed": "এই সেশনের বার্তা লোড করা যায়নি।",
+      "retry": "আবার চেষ্টা করুন"
     },
     "cliPanel": {
       "copied": "কপি হয়েছে",
@@ -5890,9 +5890,7 @@
       "cancel": "বাতিল",
       "collapse_comments": "মন্তব্য সংকুচিত করুন",
       "comment": "মন্তব্য",
-      "comment_change_failed": "মন্তব্যের সেই পরিবর্তন সংরক্ষণ করা যায়নি।",
       "comments": "মন্তব্যসমূহ",
-      "comments_load_failed": "মন্তব্য লোড করা যায়নি।",
       "delete": "মুছুন",
       "edit": "সম্পাদনা",
       "edit_comment": "মন্তব্য সম্পাদনা করুন…",
@@ -5916,7 +5914,9 @@
       "scroll_to_the_highlighted_text": "হাইলাইট করা লেখায় স্ক্রল করো",
       "shared_comment": "শেয়ার করা মন্তব্য",
       "show": "দেখাও",
-      "unknown": "অজানা"
+      "unknown": "অজানা",
+      "comment_change_failed": "মন্তব্যের সেই পরিবর্তন সংরক্ষণ করা যায়নি।",
+      "comments_load_failed": "মন্তব্য লোড করা যায়নি।"
     },
     "computerUseLiveView": {
       "close": "বন্ধ করো",
@@ -6001,10 +6001,10 @@
     },
     "embedTabStrip": {
       "close_tab": "ট্যাব বন্ধ করুন",
-      "new_chat_failed": "নতুন চ্যাট তৈরি করা যায়নি।",
       "new_tab": "নতুন ট্যাব",
       "new_tab_shift_click_for_new_chat": "নতুন ট্যাব (নতুন চ্যাটের জন্য Shift+ক্লিক)",
-      "sessions": "সেশন"
+      "sessions": "সেশন",
+      "new_chat_failed": "নতুন চ্যাট তৈরি করা যায়নি।"
     },
     "errorBoundary": {
       "reload_page": "পৃষ্ঠা রিলোড করুন",
@@ -6024,7 +6024,6 @@
       "error": "ত্রুটি",
       "failed_to_load": "লোড করা যায়নি",
       "job_name": "জবের নাম",
-      "jobs_load_failed": "কোন কাজগুলো এখনও আছে তা যাচাই করা যায়নি, তাই এই ইতিহাসে মুছে ফেলা কাজ চিহ্নিত করা হয়নি।",
       "next": "পরবর্তী",
       "no_execution_history_yet": "এখনও কোনো এক্সিকিউশন ইতিহাস নেই",
       "ok": "OK",
@@ -6034,7 +6033,8 @@
       "summary": "সারসংক্ষেপ",
       "timeout": "টাইমআউট",
       "timestamp": "টাইমস্ট্যাম্প",
-      "trigger": "ট্রিগার"
+      "trigger": "ট্রিগার",
+      "jobs_load_failed": "কোন কাজগুলো এখনও আছে তা যাচাই করা যায়নি, তাই এই ইতিহাসে মুছে ফেলা কাজ চিহ্নিত করা হয়নি।"
     },
     "feedbackPill": {
       "insider": "Insider বিল্ড",
@@ -6620,10 +6620,10 @@
       "zoom_out": "জুম আউট (-)",
       "click_to_browse_shift_click_to_copy_path": "ব্রাউজ করতে ক্লিক করুন / পাথ কপি করতে Shift+ক্লিক করুন",
       "click_to_open_shift_click_to_copy_path": "খুলতে ক্লিক করুন / পাথ কপি করতে Shift+ক্লিক করুন",
+      "mermaid_render_failed": "এই ডায়াগ্রামটি রেন্ডার করা যায়নি। এর পরিবর্তে সোর্স দেখানো হচ্ছে।",
       "copy_diagram_source": "ডায়াগ্রামের সোর্স কপি করুন",
       "diagram_source": "ডায়াগ্রামের সোর্স",
-      "copy_failed": "কপি ব্যর্থ",
-      "mermaid_render_failed": "এই ডায়াগ্রামটি রেন্ডার করা যায়নি। এর পরিবর্তে সোর্স দেখানো হচ্ছে।"
+      "copy_failed": "কপি ব্যর্থ"
     },
     "markdownToc": {
       "contents": "বিষয়সূচি",
@@ -8030,6 +8030,43 @@
       "already_attached": "সংযুক্ত — আবার স্কেচ করতে ক্যানভাস সম্পাদনা করুন",
       "load_failed": "স্কেচ প্যাড লোড করা যায়নি — সংযোগ পরীক্ষা করে আবার খুলুন"
     },
+    "agentTemplateDetail": {
+      "template_prefix": "টেমপ্লেট",
+      "customized": "কাস্টমাইজ করা",
+      "changes_count_one": "{{count}}টি পরিবর্তন",
+      "changes_count_other": "{{count}}টি পরিবর্তন",
+      "change_was": "আগে ছিল: {{value}}",
+      "change_not_set": "সেট করা নেই",
+      "reset_my_changes": "আমার পরিবর্তন রিসেট করুন",
+      "reset_confirm_title": "এই এজেন্টকে “{{name}}”-এ রিসেট করবেন?",
+      "reset_confirm_body": "আপনার পরিবর্তন — “{{fields}}” — বাতিল হয়ে যাবে। এই এজেন্ট “{{name}}” টেমপ্লেট যেমন আছে তেমনই ব্যবহার করবে।",
+      "discard_my_changes": "আমার পরিবর্তন বাতিল করুন",
+      "save_as_new_template": "নতুন টেমপ্লেট হিসেবে সেভ করুন…",
+      "publish_title": "নতুন টেমপ্লেট হিসেবে সেভ করুন",
+      "publish_hint": "এই এজেন্টের সংজ্ঞা এমন একটি টেমপ্লেট হিসেবে প্রকাশ করে যা থেকে অন্য এজেন্টরা শুরু করতে পারে। নামটি টেমপ্লেটের স্থায়ী পরিচয় হয়ে যায়।",
+      "publish_name_label": "টেমপ্লেটের নাম",
+      "publish_name_rule": "অক্ষর, সংখ্যা, ডট, ড্যাশ বা আন্ডারস্কোর ব্যবহার করুন (সর্বোচ্চ 63 অক্ষর)।",
+      "publish_action": "টেমপ্লেট সেভ করুন",
+      "switch_confirm_title": "“{{name}}”-এ যাবেন?",
+      "switch_confirm_body": "“{{origin}}”-এ আপনার পরিবর্তন (“{{fields}}”) বাতিল হয়ে যাবে। এই এজেন্ট “{{name}}” টেমপ্লেট যেমন আছে তেমনই ব্যবহার করবে।",
+      "discard_and_switch": "পরিবর্তন বাতিল করে যান",
+      "based_on_hint": "{{name}} টেমপ্লেটের উপর ভিত্তি করে — আপনার সম্পাদনা শুধুমাত্র এই এজেন্টে প্রযোজ্য এবং সাথে সাথে সংরক্ষিত হয়।",
+      "edits_make_own_copy": "এখানে পরিবর্তন করলে এই এজেন্ট টেমপ্লেটের নিজস্ব একটি কপি পায় — সাথে সাথে সংরক্ষিত হয়; মূলটি এবং অন্য এজেন্টগুলো প্রভাবিত হয় না, এবং আপনি যেকোনো সময় মূলটিতে রিসেট করতে পারেন।",
+      "config_file_info": "শেয়ার করা এজেন্ট ফোল্ডারে {{filename}} হিসেবে সংরক্ষিত।",
+      "used_by_count": "{{count}}টি এজেন্ট এটি ব্যবহার করছে",
+      "used_by_this_agent_only": "শুধু এই এজেন্টই ব্যবহার করছে",
+      "no_model_pinned": "কোনো মডেল বাঁধা নেই — অ্যাকাউন্টের ডিফল্ট",
+      "model_hint": "টেমপ্লেটে বাঁধা আছে। সঙ্গে সঙ্গেই সেভ হয়; এই এজেন্ট মডেল-এ গিয়ে বদলে দিতে পারে।",
+      "auto_approved_hint": "আপনাকে না জিজ্ঞেস করেই চলে।",
+      "prompt_lives_in_a_file": "এই নির্দেশগুলো একটা ফাইলে আছে, টেমপ্লেটের ভিতরে নয়।",
+      "prompt_truncated": "প্রথম {{count}}টি অক্ষর দেখানো হচ্ছে — বাকিটা দেখতে ফাইলটা খুলুন।",
+      "show_more": "+ আরও {{count}}টি",
+      "show_fewer": "কম দেখান",
+      "loading": "টেমপ্লেট লোড হচ্ছে…",
+      "could_not_load": "এই টেমপ্লেটের কনফিগ লোড করা যায়নি।",
+      "guardrails_hint": "এমন কমান্ড যা কখনও চালানোর অনুমতি নেই।",
+      "save_failed": "পরিবর্তনটি সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন।"
+    },
     "pinSurfaceButton": {
       "pin_limit_reached": "সাইডবারে সর্বোচ্চ {{n}}টি পিন - প্রথমে একটি আনপিন করুন"
     },
@@ -8188,6 +8225,12 @@
       "stream_error_max_duration": "ডিকটেশন তার সময়সীমায় পৌঁছে গেছে। চালিয়ে যেতে নতুন রেকর্ডিং শুরু করো।",
       "stream_error_model_missing": "স্পিচ মডেল এখনও তৈরি নয়। স্পিচ-টু-টেক্সট সেটিংসে এটি ডাউনলোড করো, তারপর আবার চেষ্টা করো।",
       "stream_error_session_failed": "ডিকটেশন সেশন ব্যর্থ হয়েছে। আবার রেকর্ড করে দেখো।"
+    },
+    "templateSource": {
+      "built_in": "বিল্ট-ইন",
+      "package": "প্যাকেজ",
+      "custom": "কাস্টম",
+      "private_copy": "ব্যক্তিগত কপি"
     }
   },
   "nav": {
@@ -9168,20 +9211,20 @@
         "inject_context": "কনটেক্সট ইনজেক্ট করুন",
         "knowledge_results_for_query": "নলেজ ফলাফল: “{{query}}”",
         "no_knowledge_found_for_query": "কোনো নলেজ পাওয়া যায়নি: “{{query}}”",
-        "retry": "আবার চেষ্টা করুন",
-        "search_failed_for_query": "নলেজ খোঁজা ব্যর্থ হয়েছে: “{{query}}”",
         "searching_knowledge_for_query": "নলেজ খোঁজা হচ্ছে: “{{query}}”…",
         "selected": "নির্বাচিত ·",
-        "tokens": "টোকেন"
+        "tokens": "টোকেন",
+        "retry": "আবার চেষ্টা করুন",
+        "search_failed_for_query": "নলেজ খোঁজা ব্যর্থ হয়েছে: “{{query}}”"
       },
       "mcpInfoButton": {
         "agent_loads_only_its_own_mcp_servers": "\"{{name}}\" এজেন্ট শুধু নিজের MCP সার্ভারগুলোই লোড করে।",
         "disabled": "নিষ্ক্রিয়",
-        "load_failed": "MCP সার্ভার লোড করা যায়নি",
         "mcp_servers_count": "MCP সার্ভার ({{count}}/{{total}})",
-        "mode_load_failed": "Tool Search মোড পড়া যায়নি; ডিফল্ট দেখানো হচ্ছে",
         "none_loaded": "কিছুই লোড হয়নি",
-        "session_mcp_servers": "সেশনের MCP সার্ভার"
+        "session_mcp_servers": "সেশনের MCP সার্ভার",
+        "load_failed": "MCP সার্ভার লোড করা যায়নি",
+        "mode_load_failed": "Tool Search মোড পড়া যায়নি; ডিফল্ট দেখানো হচ্ছে"
       },
       "mcpOAuthBanner": {
         "authenticated": "প্রমাণীকৃত হয়েছে।",
@@ -9557,10 +9600,10 @@
         "close_search": "অনুসন্ধান বন্ধ করুন",
         "ctx_add_to_chat": "চ্যাটে যোগ করুন",
         "filter_placeholder": "ফাইল ফিল্টার করুন…",
-        "git_status_failed": "Git স্ট্যাটাস পড়া যায়নি",
         "refresh": "রিফ্রেশ করুন",
         "resize": "ফাইল ব্রাউজারের আকার পরিবর্তন করুন",
-        "tree_mode": "ফাইল তালিকা মোড"
+        "tree_mode": "ফাইল তালিকা মোড",
+        "git_status_failed": "Git স্ট্যাটাস পড়া যায়নি"
       },
       "filesHome": {
         "no_project_dir": "এই চ্যাটের জন্য কোনো প্রজেক্ট ডিরেক্টরি সেট করা নেই",
@@ -10332,7 +10375,6 @@
     },
     "developerPage": {
       "developer": "ডেভেলপার",
-      "feature_previews_moved": "ফিচার প্রিভিউ এখন সেটিংস > ডেভেলপার-এ আছে",
       "tabs": {
         "agentBackend": {
           "description": "নতুন সেশন কোন এজেন্ট চালু করে — Kiro CLI, Claude Code বা KAS",
@@ -10374,7 +10416,8 @@
           "description": "সেশন চালুর লেটেন্সি (p50/p90) আর MCP/স্কিল অ্যাক্সিলারেশন মেট্রিক",
           "label": "টেলিমেট্রি"
         }
-      }
+      },
+      "feature_previews_moved": "ফিচার প্রিভিউ এখন সেটিংস > ডেভেলপার-এ আছে"
     },
     "discoverPage": {
       "subtitle": "এজেন্টিক অ্যাপ ব্রাউজ ও ইনস্টল করুন",
@@ -10554,11 +10597,11 @@
       "session_color_hint": "এই এজেন্ট শুরু করা সেশনগুলি এই রঙ ব্যবহার করে, যদি না সেশনের নিজস্ব রঙ থাকে। এটি সম্পাদনা করলে সেই সেশনগুলি পুনরায় রঙিন হয়। কোনো এজেন্ট রঙ না রাখতে খালি রাখুন।",
       "session_color_hex": "সেশন রঙের হেক্স মান",
       "session_color_clear": "সাফ করুন",
+      "editor_options_load_failed": "ক্রু এডিটরের ওয়ার্কস্পেস, টেমপ্লেট এবং মেমরি স্টোর অপশন লোড করা যায়নি।",
       "discard_unsaved_changes": "অসংরক্ষিত পরিবর্তন বাতিল করবেন?",
       "discard_unsaved_body": "এই ক্রুতে এমন সম্পাদনা রয়েছে যা কখনও সংরক্ষণ করা হয়নি। এখন বন্ধ করলে সেগুলি মুছে যাবে।",
       "discard_confirm": "পরিবর্তন বাতিল করুন",
-      "discard_also_crew_edits": "এই ক্রুর অন্য অসংরক্ষিত সম্পাদনাগুলিও এর সঙ্গে মুছে যাবে।",
-      "editor_options_load_failed": "ক্রু এডিটরের ওয়ার্কস্পেস, টেমপ্লেট এবং মেমরি স্টোর অপশন লোড করা যায়নি।"
+      "discard_also_crew_edits": "এই ক্রুর অন্য অসংরক্ষিত সম্পাদনাগুলিও এর সঙ্গে মুছে যাবে।"
     },
     "knowledge": {
       "detailView": {
@@ -11154,13 +11197,13 @@
         "session_timeout": "সেশন টাইমআউট",
         "subagent_settings": "সাবএজেন্ট সেটিংস",
         "takes_effect_on_next_session_range_60_86400s": "পরের সেশনে কার্যকর হবে। সীমা: 60–86400s।",
-        "tool_call_budget_per_subagent_1_1000_default_100": "প্রতি সাবএজেন্টের টুল-কল বাজেট (1–1000)। ডিফল্ট: 100।",
         "used_by": "যেখানে ব্যবহৃত",
         "using_global_memory_settings": "গ্লোবাল মেমরি সেটিংস ব্যবহার করা হচ্ছে",
         "using_legacy_mode_agent_default_agent_as_agent_t": "লিগ্যাসি মোড ব্যবহার হচ্ছে — এজেন্ট টেম্পলেট হিসেবে agent.default_agent",
         "warm_pool": "ওয়ার্ম পুল",
         "workspace": "ওয়ার্কস্পেস",
-        "workspaces": "ওয়ার্কস্পেস"
+        "workspaces": "ওয়ার্কস্পেস",
+        "tool_call_budget_per_subagent_1_1000_default_100": "প্রতি সাবএজেন্টের টুল-কল বাজেট (1–1000)। ডিফল্ট: 100।"
       },
       "mcpTab": {
         "actions": "অ্যাকশন",
@@ -12628,13 +12671,13 @@
       "developerPanel": {
         "developer_mode": "ডেভেলপার মোড",
         "developer_tools": "ডেভেলপার টুল",
-        "feature_previews": "ফিচার প্রিভিউ",
-        "feature_previews_desc": "অপ্রকাশিত ফিচার ও পেজ। এখানে চালু না করা পর্যন্ত এই পেজগুলো সাইডবারে ও সর্বত্র অনুসন্ধান করুন-এ দেখা যায় না; তবে নিচের সুইচগুলো সেটিংস অনুসন্ধানে খুঁজে পাওয়া যায়। সেটিংটি শুধু এই ডিভাইসে প্রযোজ্য, আর এগুলো ইচ্ছাকৃতভাবেই অসম্পূর্ণ।",
         "gateway": "গেটওয়ে",
         "open_developer_page": "ডেভেলপার পেজ খুলুন",
         "run_a_local_gateway": "লোকাল গেটওয়ে চালান",
         "show_developer_page_in_sidebar_with_logs_system": "লগ, সিস্টেম মেট্রিক ও মেমরি ইন্টারনালসহ ডেভেলপার পেজ সাইডবারে দেখান",
-        "start_a_gateway_on_this_machine_turn_it_off_to_u": "এই মেশিনে একটি গেটওয়ে চালু করে। বন্ধ করলে {{productName}} শুধু ক্লায়েন্ট হিসেবে কাজ করবে এবং এখানে গেটওয়ে চালানোর বদলে আপনার কনফিগার করা গেটওয়েতে সংযুক্ত হবে। পরের বার অ্যাপ খুললে প্রযোজ্য হবে।"
+        "start_a_gateway_on_this_machine_turn_it_off_to_u": "এই মেশিনে একটি গেটওয়ে চালু করে। বন্ধ করলে {{productName}} শুধু ক্লায়েন্ট হিসেবে কাজ করবে এবং এখানে গেটওয়ে চালানোর বদলে আপনার কনফিগার করা গেটওয়েতে সংযুক্ত হবে। পরের বার অ্যাপ খুললে প্রযোজ্য হবে।",
+        "feature_previews": "ফিচার প্রিভিউ",
+        "feature_previews_desc": "অপ্রকাশিত ফিচার ও পেজ। এখানে চালু না করা পর্যন্ত এই পেজগুলো সাইডবারে ও সর্বত্র অনুসন্ধান করুন-এ দেখা যায় না; তবে নিচের সুইচগুলো সেটিংস অনুসন্ধানে খুঁজে পাওয়া যায়। সেটিংটি শুধু এই ডিভাইসে প্রযোজ্য, আর এগুলো ইচ্ছাকৃতভাবেই অসম্পূর্ণ।"
       },
       "discordPanel": {
         "allowed_server_channel_ids": "অনুমোদিত সার্ভার চ্যানেল ID",

@@ -131,10 +131,10 @@
       "streaming": "diffusion en cours"
     },
     "chatMessageList": {
+      "open_path": "Ouvrir {{path}}",
       "copied": "Copié !",
       "copy": "Copier",
       "copy_failed": "Échec de la copie",
-      "open_path": "Ouvrir {{path}}",
       "show_less": "Afficher moins",
       "show_more": "Afficher plus"
     }
@@ -4862,9 +4862,6 @@
         "folder_delete_failed": "Impossible de supprimer le dossier.",
         "folder_create_failed": "Impossible de créer le dossier.",
         "folder_bad_name": "Ce nom de dossier contient des caractères que le disque ne peut pas stocker. Les lettres, chiffres, espaces et . _ - ( ) + @ = sont sûrs.",
-        "folder_deleted_one": "« {{name}} » supprimé : {{count}} élément.",
-        "folder_deleted_other": "« {{name}} » supprimé : {{count}} éléments.",
-        "folder_deleted_many": "« {{name}} » supprimé : {{count}} éléments.",
         "cancel": "Annuler",
         "load_more": "Afficher plus",
         "stat_this_month": "Ce mois-ci",
@@ -4957,7 +4954,6 @@
         "keys_count_one": "{{count}} clé",
         "keys_count_other": "{{count}} clés",
         "keys_count_many": "{{count}} clés",
-        "keys_for_account": "Clés de {{name}}",
         "key_healthy": "Saine",
         "parent_folders": "Dossiers parents",
         "folder_actions": "Actions du dossier",
@@ -5020,6 +5016,10 @@
         "rename_shared": "Ce fichier a un lien de partage actif : le renommer casserait le lien. Supprimez le partage (ou laissez-le expirer) et réessayez.",
         "rename_failed": "Impossible de renommer le fichier. Réessayez.",
         "rename_failed_named": "Impossible de renommer « {{name}} » : {{reason}}",
+        "folder_deleted_one": "« {{name}} » supprimé : {{count}} élément.",
+        "folder_deleted_other": "« {{name}} » supprimé : {{count}} éléments.",
+        "folder_deleted_many": "« {{name}} » supprimé : {{count}} éléments.",
+        "keys_for_account": "Clés de {{name}}",
         "library_add_empty": "Aucun artefact pour l’instant. Ce que Kiro crée pour vous apparaîtra ici, prêt à être copié dans le cloud.",
         "move_to": "Déplacer vers un dossier…",
         "move_title": "Déplacer « {{name}} » vers",
@@ -5236,17 +5236,10 @@
       "axis_tile": "Fond",
       "cancel": "Annuler",
       "customized_note": "Visage personnalisé utilisé",
-      "edit_avatar": "Modifier l'avatar",
-      "expr_hint": "Choisissez un visage et un son différents pour chaque moment.",
-      "expr_picture_note": "Une image n'a pas de visage à changer : seuls les sons s'appliquent.",
-      "expr_reset_state": "Réinitialiser",
-      "expr_sound": "Son",
       "field_hint": "Le visage de ce membre partout où il apparaît.",
       "field_label": "Avatar",
-      "hint_customize": "Modifier cet avatar",
       "image_load_failed": "L'image enregistrée n'a pas pu être chargée — le visage par défaut est affiché.",
       "mirror": "Inverser le sens",
-      "mode_expressions": "Expressions",
       "mode_face": "Visage fantôme",
       "mode_picture": "Image",
       "opt_angry": "Fâchés",
@@ -5278,7 +5271,6 @@
       "opt_party": "Chapeau de fête",
       "opt_phones": "Casque",
       "opt_raised": "Levés",
-      "opt_same_as_idle": "Comme d'habitude",
       "opt_sleepy": "Endormi",
       "opt_smile": "Sourire",
       "opt_smirk": "Sourire en coin",
@@ -5295,16 +5287,6 @@
       "opt_wrench": "Clé",
       "randomize": "Aléatoire",
       "reset_default": "Rétablir le visage par défaut",
-      "sound_blip": "Blip",
-      "sound_chime": "Carillon",
-      "sound_ding": "Ding",
-      "sound_pop": "Pop",
-      "sound_preview": "Écouter ce son",
-      "sound_pulse": "Pulsation",
-      "sound_silent": "Aucun son",
-      "state_done": "Terminé",
-      "state_error": "Échec",
-      "state_working": "En cours",
       "tile_amber": "Ambre",
       "tile_bronze": "Bronze",
       "tile_coral": "Corail",
@@ -5326,7 +5308,25 @@
       "upload_choose": "Choisir une image…",
       "upload_hint": "Glissez une image ici, ou",
       "upload_note": "PNG, JPEG ou WEBP. Recadrée en carré et réduite à 512 px avant enregistrement.",
-      "upload_too_large": "Le fichier est trop volumineux (20 Mo max)."
+      "upload_too_large": "Le fichier est trop volumineux (20 Mo max).",
+      "expr_hint": "Choisissez un visage et un son différents pour chaque moment.",
+      "expr_picture_note": "Une image n'a pas de visage à changer : seuls les sons s'appliquent.",
+      "expr_reset_state": "Réinitialiser",
+      "expr_sound": "Son",
+      "mode_expressions": "Expressions",
+      "opt_same_as_idle": "Comme d'habitude",
+      "sound_blip": "Blip",
+      "sound_chime": "Carillon",
+      "sound_ding": "Ding",
+      "sound_pop": "Pop",
+      "sound_preview": "Écouter ce son",
+      "sound_pulse": "Pulsation",
+      "sound_silent": "Aucun son",
+      "state_done": "Terminé",
+      "state_error": "Échec",
+      "state_working": "En cours",
+      "edit_avatar": "Modifier l'avatar",
+      "hint_customize": "Modifier cet avatar"
     },
     "crashNotice": {
       "diagnostics_were_saved_locally": "Nouveaux enregistrements de plantage enregistrés sur cet appareil : {{n}}. Joignez-les à votre signalement.",
@@ -5345,12 +5345,12 @@
       "pause_named": "Mettre {{name}} en pause",
       "paused": "en pause",
       "resume_named": "Reprendre {{name}}",
-      "retry": "Réessayer",
       "run_named_now": "Exécuter {{name}} maintenant",
       "running": "en cours",
       "schedule": "planification",
       "schedules_that_run_this_crew_without_you_asking": "Planifications qui exécutent cet agent sans que vous le demandiez. Distinct de Triggers ci-dessus, qui décide seulement quand l'orchestrateur sélectionne cet agent.",
-      "what_wakes_this_crew": "Ce qui réveille cet agent"
+      "what_wakes_this_crew": "Ce qui réveille cet agent",
+      "retry": "Réessayer"
     },
     "kiroAccountModal": {
       "account_details_unavailable": "Les détails du compte ne sont pas disponibles",
@@ -5682,16 +5682,16 @@
       "next_cycle_due": "Prochain cycle dû, se déclenche après le tour en cours",
       "next_cycle_in": "Prochain cycle dans {{time}}",
       "next_cycle_unscheduled": "Prochain cycle pas encore planifié",
-      "retry": "Réessayer",
       "save": "Enregistrer",
       "seconds_between_nudges": "Secondes entre relances",
       "set_a_goal": "Définir un objectif",
       "start_loop": "Démarrer la boucle",
       "stop_loop": "Arrêter la boucle",
-      "watches_load_failed": "Impossible de charger les veilles de cette session.",
       "watches_next": "prochaine",
       "watches_note": "Elles ne réveillent l'agent qu'en cas de signal réel. Gérez-les depuis la page Planification.",
-      "watches_title": "Surveillances sans jetons"
+      "watches_title": "Surveillances sans jetons",
+      "retry": "Réessayer",
+      "watches_load_failed": "Impossible de charger les veilles de cette session."
     },
     "bottomTerminalPanel": {
       "close_terminal": "Fermer le terminal",
@@ -5738,9 +5738,6 @@
       "could_not_submit_that_decision_see_the_console_f": "Impossible d’envoyer cette décision — détails dans la console.",
       "detached_head_at": "HEAD détachée sur {{branch}}",
       "drag_to_resize_double_click_to_reset": "Faire glisser pour redimensionner (double-cliquer pour réinitialiser)",
-      "collapse_composer": "Réduire la saisie du message",
-      "collapse_composer_desc": "Masque le champ pour laisser la place à la réponse ; conserve le brouillon",
-      "expand_composer": "Afficher la saisie du message",
       "file": "Fichier",
       "force_kill_discards_in_progress_work_and_queued": "Arrêt forcé — abandonne le travail en cours et les messages en file d'attente",
       "force_kill_session_discards_in_progress_work_and": "Forcer l'arrêt de la session (abandonne le travail en cours et les messages en file d'attente)",
@@ -5821,6 +5818,9 @@
       "following_global": "Suit la valeur globale ({{pct}} %)",
       "sketch": "Croquis",
       "sketch_desc": "Dessinez un croquis ; joint une image et sa source modifiable",
+      "collapse_composer": "Réduire la saisie du message",
+      "collapse_composer_desc": "Masque le champ pour laisser la place à la réponse ; conserve le brouillon",
+      "expand_composer": "Afficher la saisie du message",
       "optimize_failed": "Impossible d'optimiser le prompt. Ton texte d'origine a été restauré.",
       "optimize_failed_elsewhere": "Impossible d'optimiser le prompt lancé dans une autre session. Son texte d'origine y a été restauré.",
       "more_actions": "Plus d'actions",
@@ -5835,14 +5835,14 @@
       "earlier_messages_open_session": "Messages précédents — ouvrir la session complète (ferme la vue divisée)",
       "earlier_messages_unavailable": "Les messages précédents ne sont plus disponibles dans l’historique de cette session.",
       "forked_from": "Dérivé de {{name}}",
-      "history_load_failed": "Impossible de charger les messages de cette session.",
       "model_list": "Liste des modèles",
-      "retry": "Réessayer",
       "session_ready_type_a_message_to_start": "Session prête. Saisissez un message pour commencer.",
       "split_down": "Diviser vers le bas",
       "split_right": "Diviser vers la droite",
       "split_right_d": "Diviser vers la droite (⌘D)",
-      "type_to_filter": "Saisir pour filtrer…"
+      "type_to_filter": "Saisir pour filtrer…",
+      "history_load_failed": "Impossible de charger les messages de cette session.",
+      "retry": "Réessayer"
     },
     "cliPanel": {
       "copied": "Copié",
@@ -5985,9 +5985,7 @@
       "cancel": "Annuler",
       "collapse_comments": "Réduire les commentaires",
       "comment": "Commentaire",
-      "comment_change_failed": "Impossible d'enregistrer cette modification du commentaire.",
       "comments": "Commentaires",
-      "comments_load_failed": "Impossible de charger les commentaires.",
       "delete": "Supprimer",
       "edit": "Modifier",
       "edit_comment": "Modifier le commentaire…",
@@ -6011,7 +6009,9 @@
       "scroll_to_the_highlighted_text": "Défiler jusqu’au texte surligné",
       "shared_comment": "Commentaire partagé",
       "show": "Afficher",
-      "unknown": "Inconnu"
+      "unknown": "Inconnu",
+      "comment_change_failed": "Impossible d'enregistrer cette modification du commentaire.",
+      "comments_load_failed": "Impossible de charger les commentaires."
     },
     "computerUseLiveView": {
       "close": "Fermer",
@@ -6097,10 +6097,10 @@
     },
     "embedTabStrip": {
       "close_tab": "Fermer l'onglet",
-      "new_chat_failed": "Impossible de créer une nouvelle discussion.",
       "new_tab": "Nouvel onglet",
       "new_tab_shift_click_for_new_chat": "Nouvel onglet (Shift+clic pour une nouvelle conversation)",
-      "sessions": "Sessions"
+      "sessions": "Sessions",
+      "new_chat_failed": "Impossible de créer une nouvelle discussion."
     },
     "errorBoundary": {
       "reload_page": "Recharger la page",
@@ -6120,7 +6120,6 @@
       "error": "Erreur",
       "failed_to_load": "Échec du chargement",
       "job_name": "Nom de la tâche",
-      "jobs_load_failed": "Impossible de vérifier quelles tâches existent encore ; les tâches supprimées ne sont donc pas signalées dans cet historique.",
       "next": "Suivant",
       "no_execution_history_yet": "Aucun historique d'exécution pour l'instant",
       "ok": "OK",
@@ -6130,7 +6129,8 @@
       "summary": "Résumé",
       "timeout": "Délai dépassé",
       "timestamp": "Horodatage",
-      "trigger": "Déclencheur"
+      "trigger": "Déclencheur",
+      "jobs_load_failed": "Impossible de vérifier quelles tâches existent encore ; les tâches supprimées ne sont donc pas signalées dans cet historique."
     },
     "feedbackPill": {
       "insider": "Insider",
@@ -6722,10 +6722,10 @@
       "zoom_out": "Zoom arrière (-)",
       "click_to_browse_shift_click_to_copy_path": "Cliquer pour parcourir / Shift+clic pour copier le chemin",
       "click_to_open_shift_click_to_copy_path": "Cliquer pour ouvrir / Shift+clic pour copier le chemin",
+      "mermaid_render_failed": "Impossible d’afficher ce diagramme. La source est affichée à la place.",
       "copy_diagram_source": "Copier la source du diagramme",
       "diagram_source": "Source du diagramme",
-      "copy_failed": "Échec de la copie",
-      "mermaid_render_failed": "Impossible d’afficher ce diagramme. La source est affichée à la place."
+      "copy_failed": "Échec de la copie"
     },
     "markdownToc": {
       "contents": "Sommaire",
@@ -8140,6 +8140,44 @@
       "already_attached": "Joint — modifiez le canevas pour dessiner à nouveau",
       "load_failed": "Impossible de charger le bloc de croquis — vérifiez votre connexion et rouvrez-le"
     },
+    "agentTemplateDetail": {
+      "template_prefix": "Modèle",
+      "customized": "Personnalisé",
+      "changes_count_one": "{{count}} modification",
+      "changes_count_many": "{{count}} modifications",
+      "changes_count_other": "{{count}} modifications",
+      "change_was": "avant : {{value}}",
+      "change_not_set": "non défini",
+      "reset_my_changes": "Réinitialiser mes modifications",
+      "reset_confirm_title": "Réinitialiser cet agent sur « {{name}} » ?",
+      "reset_confirm_body": "Tes modifications — « {{fields}} » — seront abandonnées. Cet agent utilisera le modèle « {{name}} » tel quel.",
+      "discard_my_changes": "Abandonner mes modifications",
+      "save_as_new_template": "Enregistrer comme nouveau modèle…",
+      "publish_title": "Enregistrer comme un nouveau modèle",
+      "publish_hint": "Publie la définition de cet agent comme un modèle dont d’autres agents peuvent partir. Le nom devient l’identité permanente du modèle.",
+      "publish_name_label": "Nom du modèle",
+      "publish_name_rule": "Utilise des lettres, des chiffres, des points, des tirets ou des traits de soulignement (jusqu’à 63 caractères).",
+      "publish_action": "Enregistrer le modèle",
+      "switch_confirm_title": "Passer à « {{name}} » ?",
+      "switch_confirm_body": "Tes modifications sur « {{origin}} » (« {{fields}} ») seront abandonnées. Cet agent utilisera le modèle « {{name}} » tel quel.",
+      "discard_and_switch": "Abandonner les modifications et changer",
+      "based_on_hint": "Basé sur le modèle {{name}} — vos modifications ne s'appliquent qu'à cet agent et sont enregistrées au fur et à mesure.",
+      "edits_make_own_copy": "Les modifications ici donnent à cet agent sa propre copie du modèle — enregistrées au fur et à mesure ; l'original et les autres agents ne sont pas affectés, et vous pouvez revenir à l'original à tout moment.",
+      "config_file_info": "Enregistré sous {{filename}} dans le dossier partagé des agents.",
+      "used_by_count": "utilisé par {{count}} agents",
+      "used_by_this_agent_only": "utilisé par cet agent seulement",
+      "no_model_pinned": "Aucun modèle fixé — celui du compte",
+      "model_hint": "Fixé dans le modèle. Enregistré immédiatement ; cet agent peut le remplacer dans Modèle.",
+      "auto_approved_hint": "S’exécute sans te demander.",
+      "prompt_lives_in_a_file": "Ces instructions sont dans un fichier, pas dans le modèle.",
+      "prompt_truncated": "Affiche les {{count}} premiers caractères — ouvre le fichier pour lire la suite.",
+      "show_more": "+ {{count}} de plus",
+      "show_fewer": "Afficher moins",
+      "loading": "Chargement du modèle…",
+      "could_not_load": "Impossible de charger la configuration de ce modèle.",
+      "guardrails_hint": "Commandes qui ne peuvent jamais être exécutées.",
+      "save_failed": "Cette modification n'a pas été enregistrée — réessayez."
+    },
     "pinSurfaceButton": {
       "pin_limit_reached": "Maximum {{n}} éléments épinglés à la barre latérale : détachez-en un d'abord"
     },
@@ -8298,6 +8336,12 @@
       "stream_error_max_duration": "La dictée a atteint sa durée maximale. Lance un nouvel enregistrement pour continuer.",
       "stream_error_model_missing": "Le modèle vocal n'est pas encore prêt. Télécharge-le dans les paramètres de reconnaissance vocale, puis réessaie.",
       "stream_error_session_failed": "La session de dictée a échoué. Réessaie d'enregistrer."
+    },
+    "templateSource": {
+      "built_in": "Intégré",
+      "package": "Package",
+      "custom": "Personnalisé",
+      "private_copy": "Copie privée"
     }
   },
   "nav": {
@@ -9296,20 +9340,20 @@
         "inject_context": "Injecter le contexte",
         "knowledge_results_for_query": "Résultats de connaissances pour “{{query}}”",
         "no_knowledge_found_for_query": "Aucune connaissance trouvée pour “{{query}}”",
-        "retry": "Réessayer",
-        "search_failed_for_query": "La recherche de connaissances a échoué pour “{{query}}”",
         "searching_knowledge_for_query": "Recherche de connaissances pour “{{query}}”…",
         "selected": "sélectionnés ·",
-        "tokens": "jetons"
+        "tokens": "jetons",
+        "retry": "Réessayer",
+        "search_failed_for_query": "La recherche de connaissances a échoué pour “{{query}}”"
       },
       "mcpInfoButton": {
         "agent_loads_only_its_own_mcp_servers": "L’agent « {{name}} » ne charge que ses propres serveurs MCP.",
         "disabled": "désactivé",
-        "load_failed": "Impossible de charger les serveurs MCP",
         "mcp_servers_count": "Serveurs MCP ({{count}}/{{total}})",
-        "mode_load_failed": "Impossible de lire le mode Tool Search ; valeur par défaut affichée",
         "none_loaded": "Aucun chargé",
-        "session_mcp_servers": "Serveurs MCP de la session"
+        "session_mcp_servers": "Serveurs MCP de la session",
+        "load_failed": "Impossible de charger les serveurs MCP",
+        "mode_load_failed": "Impossible de lire le mode Tool Search ; valeur par défaut affichée"
       },
       "mcpOAuthBanner": {
         "authenticated": "authentifié.",
@@ -9694,10 +9738,10 @@
         "close_search": "Fermer la recherche",
         "ctx_add_to_chat": "Ajouter à la conversation",
         "filter_placeholder": "Filtrer les fichiers…",
-        "git_status_failed": "Impossible de lire l’état git",
         "refresh": "Actualiser",
         "resize": "Redimensionner l'explorateur",
-        "tree_mode": "Mode liste de fichiers"
+        "tree_mode": "Mode liste de fichiers",
+        "git_status_failed": "Impossible de lire l’état git"
       },
       "filesHome": {
         "no_project_dir": "Aucun répertoire de projet n'est défini pour cette discussion",
@@ -10482,7 +10526,6 @@
     },
     "developerPage": {
       "developer": "Développeur",
-      "feature_previews_moved": "Les aperçus de fonctionnalités sont passés dans Paramètres > Développeur",
       "tabs": {
         "agentBackend": {
           "description": "Quel agent les nouvelles sessions démarrent : Kiro CLI, Claude Code ou KAS",
@@ -10524,7 +10567,8 @@
           "description": "Latence de démarrage des sessions (p50/p90) et métriques d’accélération MCP/compétences",
           "label": "Télémétrie"
         }
-      }
+      },
+      "feature_previews_moved": "Les aperçus de fonctionnalités sont passés dans Paramètres > Développeur"
     },
     "discoverPage": {
       "subtitle": "Parcourez et installez des applications agentiques",
@@ -10705,11 +10749,11 @@
       "session_color_hint": "Les sessions lancées par cet agent utilisent cette couleur, sauf si la session a sa propre couleur. La modifier recolore ces sessions. Laisser vide pour aucune couleur d’agent.",
       "session_color_hex": "Valeur hexadécimale de la couleur de session",
       "session_color_clear": "Effacer",
+      "editor_options_load_failed": "Impossible de charger les options d'espace de travail, de modèle et de magasin de mémoire de l'éditeur de crew.",
       "discard_unsaved_changes": "Abandonner les modifications non enregistrées ?",
       "discard_unsaved_body": "Cet équipage a des modifications qui n'ont jamais été enregistrées. Fermer maintenant les supprimera.",
       "discard_confirm": "Abandonner les modifications",
-      "discard_also_crew_edits": "Les autres modifications non enregistrées de cet équipage seront supprimées avec elle.",
-      "editor_options_load_failed": "Impossible de charger les options d'espace de travail, de modèle et de magasin de mémoire de l'éditeur de crew."
+      "discard_also_crew_edits": "Les autres modifications non enregistrées de cet équipage seront supprimées avec elle."
     },
     "knowledge": {
       "detailView": {
@@ -11313,13 +11357,13 @@
         "session_timeout": "Délai d'expiration de session",
         "subagent_settings": "Paramètres des sous-agents",
         "takes_effect_on_next_session_range_60_86400s": "Prend effet à la prochaine session. Plage : 60–86400s.",
-        "tool_call_budget_per_subagent_1_1000_default_100": "Budget d’appels d’outils par sous-agent (1–1000). Par défaut : 100.",
         "used_by": "Utilisé par",
         "using_global_memory_settings": "Utilisation des paramètres de mémoire globaux",
         "using_legacy_mode_agent_default_agent_as_agent_t": "Mode héritage — agent.default_agent comme modèle d'agent",
         "warm_pool": "Pool préchauffé",
         "workspace": "Espace de travail",
-        "workspaces": "Espaces de travail"
+        "workspaces": "Espaces de travail",
+        "tool_call_budget_per_subagent_1_1000_default_100": "Budget d’appels d’outils par sous-agent (1–1000). Par défaut : 100."
       },
       "mcpTab": {
         "actions": "Actions",
@@ -12800,13 +12844,13 @@
       "developerPanel": {
         "developer_mode": "Mode développeur",
         "developer_tools": "Outils de développement",
-        "feature_previews": "Aperçus de fonctionnalités",
-        "feature_previews_desc": "Fonctionnalités et pages non publiées. Les pages restent masquées dans la barre latérale et dans Rechercher partout jusqu’à ce que tu les actives ici ; les interrupteurs eux-mêmes apparaissent bien dans la recherche des paramètres. Valable pour cet appareil uniquement, et inachevées à dessein.",
         "gateway": "Passerelle",
         "open_developer_page": "Ouvrir la page Développeur",
         "run_a_local_gateway": "Exécuter une passerelle locale",
         "show_developer_page_in_sidebar_with_logs_system": "Afficher la page Développeur dans la barre latérale, avec les journaux, les métriques système et les détails internes de la mémoire",
-        "start_a_gateway_on_this_machine_turn_it_off_to_u": "Démarre une passerelle sur cette machine. Désactivez cette option pour utiliser {{productName}} uniquement comme client : la connexion se fera vers la passerelle configurée au lieu d'en lancer une ici. Prend effet au prochain lancement de l'application."
+        "start_a_gateway_on_this_machine_turn_it_off_to_u": "Démarre une passerelle sur cette machine. Désactivez cette option pour utiliser {{productName}} uniquement comme client : la connexion se fera vers la passerelle configurée au lieu d'en lancer une ici. Prend effet au prochain lancement de l'application.",
+        "feature_previews": "Aperçus de fonctionnalités",
+        "feature_previews_desc": "Fonctionnalités et pages non publiées. Les pages restent masquées dans la barre latérale et dans Rechercher partout jusqu’à ce que tu les actives ici ; les interrupteurs eux-mêmes apparaissent bien dans la recherche des paramètres. Valable pour cet appareil uniquement, et inachevées à dessein."
       },
       "discordPanel": {
         "allowed_server_channel_ids": "ID de canaux de serveur autorisés",

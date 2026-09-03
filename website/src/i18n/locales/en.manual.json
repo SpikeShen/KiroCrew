@@ -1269,17 +1269,10 @@
       "axis_tile": "Background",
       "cancel": "Cancel",
       "customized_note": "Using a custom face",
-      "edit_avatar": "Edit avatar",
-      "expr_hint": "Pick a different face and a sound for each moment.",
-      "expr_picture_note": "A picture has no face to change, so only the sounds apply.",
-      "expr_reset_state": "Reset",
-      "expr_sound": "Sound",
       "field_hint": "The face this crew wears everywhere it appears.",
       "field_label": "Avatar",
-      "hint_customize": "Edit this avatar",
       "image_load_failed": "The saved picture could not be loaded — showing the default face instead.",
       "mirror": "Flip direction",
-      "mode_expressions": "Expressions",
       "mode_face": "Ghost face",
       "mode_picture": "Picture",
       "opt_angry": "Angry",
@@ -1311,7 +1304,6 @@
       "opt_party": "Party hat",
       "opt_phones": "Headphones",
       "opt_raised": "Raised",
-      "opt_same_as_idle": "Same as usual",
       "opt_sleepy": "Sleepy",
       "opt_smile": "Smile",
       "opt_smirk": "Smirk",
@@ -1328,16 +1320,6 @@
       "opt_wrench": "Wrench",
       "randomize": "Randomize",
       "reset_default": "Reset to the default face",
-      "sound_blip": "Blip",
-      "sound_chime": "Chime",
-      "sound_ding": "Ding",
-      "sound_pop": "Pop",
-      "sound_preview": "Play this sound",
-      "sound_pulse": "Pulse",
-      "sound_silent": "No sound",
-      "state_done": "Finished",
-      "state_error": "Failed",
-      "state_working": "Working",
       "tile_amber": "Amber",
       "tile_bronze": "Bronze",
       "tile_coral": "Coral",
@@ -1359,7 +1341,25 @@
       "upload_choose": "Choose a picture…",
       "upload_hint": "Drag a picture here, or",
       "upload_note": "PNG, JPEG, or WEBP. Cropped square and scaled to 512 px before it is stored.",
-      "upload_too_large": "That file is too large (20 MB max)."
+      "upload_too_large": "That file is too large (20 MB max).",
+      "expr_hint": "Pick a different face and a sound for each moment.",
+      "expr_picture_note": "A picture has no face to change, so only the sounds apply.",
+      "expr_reset_state": "Reset",
+      "expr_sound": "Sound",
+      "mode_expressions": "Expressions",
+      "opt_same_as_idle": "Same as usual",
+      "sound_blip": "Blip",
+      "sound_chime": "Chime",
+      "sound_ding": "Ding",
+      "sound_pop": "Pop",
+      "sound_preview": "Play this sound",
+      "sound_pulse": "Pulse",
+      "sound_silent": "No sound",
+      "state_done": "Finished",
+      "state_error": "Failed",
+      "state_working": "Working",
+      "edit_avatar": "Edit avatar",
+      "hint_customize": "Edit this avatar"
     },
     "crashNotice": {
       "diagnostics_were_saved_locally": "New crash records saved on this machine: {{n}}. Attach them when you report the problem.",
@@ -1373,9 +1373,9 @@
       "pause_named": "Pause {{name}}",
       "paused": "paused",
       "resume_named": "Resume {{name}}",
-      "retry": "Retry",
       "run_named_now": "Run {{name}} now",
-      "running": "running"
+      "running": "running",
+      "retry": "Retry"
     },
     "rejectDropdown": {
       "reject_all": "Reject all — refuse the rest without asking",
@@ -1531,16 +1531,16 @@
       "next_cycle_due": "Next cycle due, fires after the current turn",
       "next_cycle_in": "Next cycle in {{time}}",
       "next_cycle_unscheduled": "Next cycle not yet scheduled",
-      "retry": "Retry",
       "save": "Save",
       "start_loop": "Start loop",
+      "retry": "Retry",
       "watches_load_failed": "Couldn't load this session's watches."
     },
     "bottomTerminalPanel": {
-      "close_failed": "Couldn't stop this terminal's shell on the server. It will be cleaned up automatically.",
-      "closing_terminal": "Closing terminal…",
       "maximum_terminals": "Maximum {{n}} terminals",
-      "terminal": "Terminal"
+      "terminal": "Terminal",
+      "close_failed": "Couldn't stop this terminal's shell on the server. It will be cleaned up automatically.",
+      "closing_terminal": "Closing terminal…"
     },
     "chatInput": {
       "send_a_message_or_tap_the_mic_for_voice": "Send a message, or tap the mic for voice",
@@ -1751,8 +1751,8 @@
       "searching_2": "Searching: {{name}}"
     },
     "embedTabStrip": {
-      "new_chat_failed": "Couldn't create a new chat.",
-      "sessions": "Sessions"
+      "sessions": "Sessions",
+      "new_chat_failed": "Couldn't create a new chat."
     },
     "excalidrawBlock": {
       "render_failed": "Couldn't render diagram — showing source"
@@ -2121,10 +2121,10 @@
       "zoom_out": "Zoom out (-)",
       "click_to_open_shift_click_to_copy_path": "Click to open / Shift+click to copy path",
       "click_to_browse_shift_click_to_copy_path": "Click to browse / Shift+click to copy path",
+      "mermaid_render_failed": "Couldn’t render this diagram. Showing the source instead.",
       "copy_diagram_source": "Copy diagram source",
       "diagram_source": "Diagram source",
-      "copy_failed": "Copy failed",
-      "mermaid_render_failed": "Couldn’t render this diagram. Showing the source instead."
+      "copy_failed": "Copy failed"
     },
     "mcpAppFrame": {
       "collapse": "Collapse",
@@ -2794,6 +2794,43 @@
       "answer_failed": "Couldn’t send your answer. The agent is still waiting, so try again.",
       "dismiss_failed": "Couldn’t dismiss this question. Try again."
     },
+    "agentTemplateDetail": {
+      "template_prefix": "Template",
+      "customized": "Customized",
+      "changes_count_one": "{{count}} change",
+      "changes_count_other": "{{count}} changes",
+      "change_was": "was: {{value}}",
+      "change_not_set": "not set",
+      "reset_my_changes": "Reset my changes",
+      "reset_confirm_title": "Reset this agent to “{{name}}”?",
+      "reset_confirm_body": "Your changes — “{{fields}}” — will be discarded. This agent will use the “{{name}}” template as-is.",
+      "discard_my_changes": "Discard my changes",
+      "save_as_new_template": "Save as new template…",
+      "publish_title": "Save as a new template",
+      "publish_hint": "Publishes this agent's definition as a template other agents can start from. The name becomes the template's permanent identity.",
+      "publish_name_label": "Template name",
+      "publish_name_rule": "Use letters, digits, dots, dashes or underscores (up to 63 characters).",
+      "publish_action": "Save template",
+      "switch_confirm_title": "Switch to “{{name}}”?",
+      "switch_confirm_body": "Your changes to “{{origin}}” (“{{fields}}”) will be discarded. This agent will use the “{{name}}” template as-is.",
+      "discard_and_switch": "Discard changes and switch",
+      "based_on_hint": "Based on the {{name}} template — your edits apply to this agent only and are saved as you go.",
+      "edits_make_own_copy": "Changes here give this agent its own copy of the template — saved as you go; the original and other agents are not affected, and you can reset to the original anytime.",
+      "config_file_info": "Stored as {{filename}} in the shared agents folder.",
+      "used_by_count": "used by {{count}} agents",
+      "used_by_this_agent_only": "used by this agent only",
+      "no_model_pinned": "No model pinned — account default",
+      "model_hint": "Pinned in the template. Saved immediately; this agent can override it under Model.",
+      "auto_approved_hint": "Runs without asking you first.",
+      "prompt_lives_in_a_file": "These instructions live in a file, not in the template record.",
+      "prompt_truncated": "Showing the first {{count}} characters — open the file to read the rest.",
+      "show_more": "+ {{count}} more",
+      "show_fewer": "Show fewer",
+      "loading": "Loading the template…",
+      "could_not_load": "Could not load this template's configuration.",
+      "guardrails_hint": "Commands that are never allowed to run.",
+      "save_failed": "That change didn’t save — try again."
+    },
     "pinSurfaceButton": {
       "pin_limit_reached": "Maximum {{n}} sidebar pins - unpin one first"
     },
@@ -3331,14 +3368,14 @@
       "knowledgePicker": {
         "knowledge_results_for_query": "Knowledge results for “{{query}}”",
         "no_knowledge_found_for_query": "No knowledge found for “{{query}}”",
+        "searching_knowledge_for_query": "Searching knowledge for “{{query}}”…",
         "retry": "Retry",
-        "search_failed_for_query": "Knowledge search failed for “{{query}}”",
-        "searching_knowledge_for_query": "Searching knowledge for “{{query}}”…"
+        "search_failed_for_query": "Knowledge search failed for “{{query}}”"
       },
       "mcpInfoButton": {
         "agent_loads_only_its_own_mcp_servers": "Agent \"{{name}}\" loads only its own MCP servers.",
-        "load_failed": "Couldn't load the MCP servers",
         "mcp_servers_count": "MCP Servers ({{count}}/{{total}})",
+        "load_failed": "Couldn't load the MCP servers",
         "mode_load_failed": "Couldn't read the Tool Search mode; showing the default"
       },
       "mcpOAuthBanner": {
@@ -3514,10 +3551,10 @@
         "close_search": "Close search",
         "ctx_add_to_chat": "Add to chat",
         "filter_placeholder": "Filter files…",
-        "git_status_failed": "Couldn't read the git status",
         "refresh": "Refresh",
         "resize": "Resize file browser",
-        "tree_mode": "File list mode"
+        "tree_mode": "File list mode",
+        "git_status_failed": "Couldn't read the git status"
       },
       "filesHome": {
         "no_project_dir": "No project directory is set for this chat",
@@ -3978,7 +4015,6 @@
       "disk_usage_unavailable": "Disk usage unavailable"
     },
     "developerPage": {
-      "feature_previews_moved": "Feature Previews moved to Settings > Developer",
       "tabs": {
         "agentBackend": {
           "description": "Which agent new sessions start — Kiro CLI, Claude Code, or KAS",
@@ -4020,7 +4056,8 @@
           "description": "Credit spend, context cost, and session startup latency",
           "label": "Telemetry"
         }
-      }
+      },
+      "feature_previews_moved": "Feature Previews moved to Settings > Developer"
     },
     "discoverPage": {
       "subtitle": "Browse and install agentic apps",
@@ -4085,11 +4122,11 @@
       "session_color_hint": "Sessions this agent starts use this color unless the session has a color of its own. Editing it re-tints those sessions. Leave empty for no agent color.",
       "session_color_hex": "Session color hex value",
       "session_color_clear": "Clear",
+      "editor_options_load_failed": "Couldn't load the crew editor's workspace, template, and memory store options.",
       "discard_unsaved_changes": "Discard unsaved changes?",
       "discard_unsaved_body": "This crew has edits that were never saved. Closing now throws them away.",
       "discard_confirm": "Discard changes",
-      "discard_also_crew_edits": "The crew's other unsaved edits are thrown away with it.",
-      "editor_options_load_failed": "Couldn't load the crew editor's workspace, template, and memory store options."
+      "discard_also_crew_edits": "The crew's other unsaved edits are thrown away with it."
     },
     "knowledge": {
       "detailView": {
@@ -4866,10 +4903,6 @@
         "auto_update_setting_unavailable": "Couldn't load the auto-update setting. The switch shows the default until it loads.",
         "copy_failed_select_the_command_and_copy_it_manually": "Copy failed. Select the command and copy it manually.",
         "update_info_unavailable": "Couldn't read this build's version and update channel from the app."
-      },
-      "developerPanel": {
-        "feature_previews": "Feature Previews",
-        "feature_previews_desc": "Unreleased features and pages. The pages stay hidden from the sidebar and from Search Everywhere until you turn them on here; the switches themselves do show up in Settings search. Per-device, and unpolished on purpose."
       },
       "computerUsePanel": {
         "computer_use_lets_the_agent_read_any_app_window": "Computer use lets the agent read any app window and send clicks and keystrokes into it. Most clicks are delivered straight to the app and leave your pointer alone, but the agent can ask to move the real pointer when a target needs it. Password fields are never read; nothing else limits which apps it may drive.",
@@ -5675,6 +5708,10 @@
         "engine_download_failed": "Could not start the browser download.",
         "install_request_failed": "Could not start the install.",
         "token_save_failed": "Could not save the extension token."
+      },
+      "developerPanel": {
+        "feature_previews": "Feature Previews",
+        "feature_previews_desc": "Unreleased features and pages. The pages stay hidden from the sidebar and from Search Everywhere until you turn them on here; the switches themselves do show up in Settings search. Per-device, and unpolished on purpose."
       }
     },
     "systemPage": {},
@@ -5958,6 +5995,12 @@
       "stream_error_max_duration": "Dictation reached its length limit. Start a new recording to continue.",
       "stream_error_model_missing": "The speech model is not ready yet. Download it in the speech-to-text settings, then try again.",
       "stream_error_session_failed": "The dictation session failed. Try recording again."
+    },
+    "templateSource": {
+      "built_in": "Built-in",
+      "package": "Package",
+      "custom": "Custom",
+      "private_copy": "Private copy"
     }
   },
   "autoImprovement": {

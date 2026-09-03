@@ -125,10 +125,10 @@
       "streaming": "流式输出中"
     },
     "chatMessageList": {
+      "open_path": "打开 {{path}}",
       "copied": "已复制！",
       "copy": "复制",
       "copy_failed": "复制失败",
-      "open_path": "打开 {{path}}",
       "show_less": "收起",
       "show_more": "展开更多"
     }
@@ -4706,7 +4706,6 @@
         "folder_delete_failed": "无法删除该文件夹。",
         "folder_create_failed": "无法创建该文件夹。",
         "folder_bad_name": "该文件夹名称包含硬盘无法存储的字符。字母、数字、空格以及 . _ - ( ) + @ = 是安全的。",
-        "folder_deleted_other": "已删除“{{name}}”：{{count}} 个项目。",
         "cancel": "取消",
         "load_more": "加载更多",
         "stat_this_month": "本月",
@@ -4797,7 +4796,6 @@
         "access_list_failed": "无法读取分享链接。",
         "access_forget_failed": "无法从列表中移除该链接。它仍在列表中。",
         "keys_count_other": "{{count}} 个密钥",
-        "keys_for_account": "{{name}} 的密钥",
         "key_healthy": "正常",
         "parent_folders": "上级文件夹",
         "folder_actions": "文件夹操作",
@@ -4858,6 +4856,8 @@
         "rename_shared": "该文件有仍在流通的分享链接——重命名会使链接失效。请先移除分享（或等它过期）后重试。",
         "rename_failed": "文件重命名失败，请重试。",
         "rename_failed_named": "无法重命名“{{name}}”：{{reason}}",
+        "folder_deleted_other": "已删除“{{name}}”：{{count}} 个项目。",
+        "keys_for_account": "{{name}} 的密钥",
         "library_add_empty": "还没有产物。Kiro 为你生成的内容会出现在这里，可随时复制到云端。",
         "move_to": "移动到文件夹…",
         "move_title": "将“{{name}}”移动到",
@@ -5058,17 +5058,10 @@
       "axis_tile": "底色",
       "cancel": "取消",
       "customized_note": "已使用自定义脸",
-      "edit_avatar": "编辑头像",
-      "expr_hint": "为每个时刻挑一张不同的脸和一个声音。",
-      "expr_picture_note": "图片没有可以变化的脸，因此只有声音生效。",
-      "expr_reset_state": "重置",
-      "expr_sound": "声音",
       "field_hint": "这个成员在所有地方显示的面孔。",
       "field_label": "头像",
-      "hint_customize": "编辑这个头像",
       "image_load_failed": "已保存的图片无法加载，暂以默认面孔显示。",
       "mirror": "左右翻转",
-      "mode_expressions": "表情",
       "mode_face": "捏脸",
       "mode_picture": "上传图片",
       "opt_angry": "生气",
@@ -5100,7 +5093,6 @@
       "opt_party": "派对帽",
       "opt_phones": "耳机",
       "opt_raised": "扬起",
-      "opt_same_as_idle": "与平时相同",
       "opt_sleepy": "困",
       "opt_smile": "微笑",
       "opt_smirk": "坏笑",
@@ -5117,16 +5109,6 @@
       "opt_wrench": "扳手",
       "randomize": "随机",
       "reset_default": "恢复默认脸",
-      "sound_blip": "嘀",
-      "sound_chime": "铃声",
-      "sound_ding": "叮",
-      "sound_pop": "啵",
-      "sound_preview": "播放这个声音",
-      "sound_pulse": "脉冲",
-      "sound_silent": "没有声音",
-      "state_done": "已完成",
-      "state_error": "失败",
-      "state_working": "工作中",
       "tile_amber": "琥珀色",
       "tile_bronze": "古铜色",
       "tile_coral": "珊瑚色",
@@ -5148,7 +5130,25 @@
       "upload_choose": "选择图片…",
       "upload_hint": "把图片拖到这里，或",
       "upload_note": "PNG、JPEG 或 WEBP。保存前会裁剪为正方形并缩放到 512 像素。",
-      "upload_too_large": "文件太大(最大 20 MB)。"
+      "upload_too_large": "文件太大(最大 20 MB)。",
+      "expr_hint": "为每个时刻挑一张不同的脸和一个声音。",
+      "expr_picture_note": "图片没有可以变化的脸，因此只有声音生效。",
+      "expr_reset_state": "重置",
+      "expr_sound": "声音",
+      "mode_expressions": "表情",
+      "opt_same_as_idle": "与平时相同",
+      "sound_blip": "嘀",
+      "sound_chime": "铃声",
+      "sound_ding": "叮",
+      "sound_pop": "啵",
+      "sound_preview": "播放这个声音",
+      "sound_pulse": "脉冲",
+      "sound_silent": "没有声音",
+      "state_done": "已完成",
+      "state_error": "失败",
+      "state_working": "工作中",
+      "edit_avatar": "编辑头像",
+      "hint_customize": "编辑这个头像"
     },
     "crashNotice": {
       "diagnostics_were_saved_locally": "已在本机保存 {{n}} 条新的崩溃记录。反馈问题时请一并附上。",
@@ -5167,12 +5167,12 @@
       "pause_named": "暂停 {{name}}",
       "paused": "已暂停",
       "resume_named": "恢复 {{name}}",
-      "retry": "重试",
       "run_named_now": "立即运行 {{name}}",
       "running": "执行中",
       "schedule": "定时",
       "schedules_that_run_this_crew_without_you_asking": "会在你不开口的情况下运行这个代理的定时任务。与上面的 Triggers 不同，后者只决定编排器何时选中这个代理。",
-      "what_wakes_this_crew": "什么会唤醒这个代理"
+      "what_wakes_this_crew": "什么会唤醒这个代理",
+      "retry": "重试"
     },
     "kiroAccountModal": {
       "account_details_unavailable": "账户详情暂不可用",
@@ -5496,16 +5496,16 @@
       "next_cycle_due": "下次循环已到期，将在当前轮次结束后触发",
       "next_cycle_in": "距下次循环还有 {{time}}",
       "next_cycle_unscheduled": "下次循环尚未安排",
-      "retry": "重试",
       "save": "保存",
       "seconds_between_nudges": "推动间隔秒数",
       "set_a_goal": "设定目标",
       "start_loop": "启动循环",
       "stop_loop": "停止循环",
-      "watches_load_failed": "无法加载此会话的监视项。",
       "watches_next": "下次",
       "watches_note": "只在出现真实信号时唤醒智能体。可在“计划”页面管理。",
-      "watches_title": "零 token 监视"
+      "watches_title": "零 token 监视",
+      "retry": "重试",
+      "watches_load_failed": "无法加载此会话的监视项。"
     },
     "bottomTerminalPanel": {
       "close_terminal": "关闭终端",
@@ -5552,9 +5552,6 @@
       "could_not_submit_that_decision_see_the_console_f": "无法提交此决定 — 详见控制台。",
       "detached_head_at": "游离 HEAD，位于 {{branch}}",
       "drag_to_resize_double_click_to_reset": "拖动调整大小（双击重置）",
-      "collapse_composer": "收起消息输入",
-      "collapse_composer_desc": "隐藏输入框，让回答占满空间；草稿会保留",
-      "expand_composer": "展开消息输入",
       "file": "文件",
       "force_kill_discards_in_progress_work_and_queued": "强制终止 — 丢弃进行中的工作和排队消息",
       "force_kill_session_discards_in_progress_work_and": "强制终止会话（丢弃进行中的工作和排队消息）",
@@ -5635,6 +5632,9 @@
       "following_global": "跟随全局设置（{{pct}}%）",
       "sketch": "草图",
       "sketch_desc": "画个草图；会附上图片和可编辑源文件",
+      "collapse_composer": "收起消息输入",
+      "collapse_composer_desc": "隐藏输入框，让回答占满空间；草稿会保留",
+      "expand_composer": "展开消息输入",
       "optimize_failed": "无法优化提示词。已恢复原始文本。",
       "optimize_failed_elsewhere": "无法优化在另一个会话中发起的提示词。原始文本已在该会话中恢复。",
       "more_actions": "更多操作",
@@ -5649,14 +5649,14 @@
       "earlier_messages_open_session": "更早的消息 — 打开完整会话（关闭分屏）",
       "earlier_messages_unavailable": "更早的消息在此会话的历史记录中不再可用。",
       "forked_from": "分叉自 {{name}}",
-      "history_load_failed": "无法加载此会话的消息。",
       "model_list": "模型列表",
-      "retry": "重试",
       "session_ready_type_a_message_to_start": "会话就绪。输入消息即可开始。",
       "split_down": "向下分屏",
       "split_right": "向右分屏",
       "split_right_d": "向右分屏（⌘D）",
-      "type_to_filter": "输入以筛选…"
+      "type_to_filter": "输入以筛选…",
+      "history_load_failed": "无法加载此会话的消息。",
+      "retry": "重试"
     },
     "cliPanel": {
       "copied": "已复制",
@@ -5795,9 +5795,7 @@
       "cancel": "取消",
       "collapse_comments": "折叠评论",
       "comment": "评论",
-      "comment_change_failed": "无法保存该评论更改。",
       "comments": "评论",
-      "comments_load_failed": "无法加载评论。",
       "delete": "删除",
       "edit": "编辑",
       "edit_comment": "编辑评论…",
@@ -5821,7 +5819,9 @@
       "scroll_to_the_highlighted_text": "滚动到高亮文本",
       "shared_comment": "共享评论",
       "show": "展开",
-      "unknown": "未知"
+      "unknown": "未知",
+      "comment_change_failed": "无法保存该评论更改。",
+      "comments_load_failed": "无法加载评论。"
     },
     "computerUseLiveView": {
       "close": "关闭",
@@ -5905,10 +5905,10 @@
     },
     "embedTabStrip": {
       "close_tab": "关闭标签页",
-      "new_chat_failed": "无法创建新的对话。",
       "new_tab": "新标签页",
       "new_tab_shift_click_for_new_chat": "新标签页（Shift+点击新建聊天）",
-      "sessions": "会话"
+      "sessions": "会话",
+      "new_chat_failed": "无法创建新的对话。"
     },
     "errorBoundary": {
       "reload_page": "重新加载页面",
@@ -5928,7 +5928,6 @@
       "error": "错误",
       "failed_to_load": "加载失败",
       "job_name": "任务名称",
-      "jobs_load_failed": "无法确认哪些任务仍然存在，因此此历史记录中未标记已删除的任务。",
       "next": "下一页",
       "no_execution_history_yet": "暂无执行历史",
       "ok": "成功",
@@ -5938,7 +5937,8 @@
       "summary": "摘要",
       "timeout": "超时",
       "timestamp": "时间戳",
-      "trigger": "触发方式"
+      "trigger": "触发方式",
+      "jobs_load_failed": "无法确认哪些任务仍然存在，因此此历史记录中未标记已删除的任务。"
     },
     "feedbackPill": {
       "insider": "Insider 版",
@@ -6518,10 +6518,10 @@
       "zoom_out": "缩小（-）",
       "click_to_browse_shift_click_to_copy_path": "点击浏览 / Shift+点击复制路径",
       "click_to_open_shift_click_to_copy_path": "点击打开 / Shift+点击复制路径",
+      "mermaid_render_failed": "无法渲染此图表。改为显示源代码。",
       "copy_diagram_source": "复制图表源代码",
       "diagram_source": "图表源代码",
-      "copy_failed": "复制失败",
-      "mermaid_render_failed": "无法渲染此图表。改为显示源代码。"
+      "copy_failed": "复制失败"
     },
     "markdownToc": {
       "contents": "目录",
@@ -7920,6 +7920,42 @@
       "already_attached": "已附加——继续编辑画布可再次草图",
       "load_failed": "草图板加载失败——请检查网络后重新打开"
     },
+    "agentTemplateDetail": {
+      "template_prefix": "模板",
+      "customized": "已自定义",
+      "changes_count_other": "{{count}} 处改动",
+      "change_was": "原为：{{value}}",
+      "change_not_set": "未设置",
+      "reset_my_changes": "重置我的改动",
+      "reset_confirm_title": "将该代理重置为 “{{name}}”？",
+      "reset_confirm_body": "你的改动 — “{{fields}}” — 将被丢弃。该代理将原样使用 “{{name}}” 模板。",
+      "discard_my_changes": "丢弃我的改动",
+      "save_as_new_template": "另存为新模板…",
+      "publish_title": "另存为新模板",
+      "publish_hint": "把该代理的定义发布为一个模板，其他代理可以从它开始。这个名称将成为模板的永久标识。",
+      "publish_name_label": "模板名称",
+      "publish_name_rule": "使用字母、数字、点、短横线或下划线（最多 63 个字符）。",
+      "publish_action": "保存模板",
+      "switch_confirm_title": "切换到 “{{name}}”？",
+      "switch_confirm_body": "你在 “{{origin}}” 上的改动（“{{fields}}”）将被丢弃。该代理将原样使用 “{{name}}” 模板。",
+      "discard_and_switch": "丢弃改动并切换",
+      "based_on_hint": "基于 {{name}} 模板 — 你的编辑仅应用于此 Agent，并会即时保存。",
+      "edits_make_own_copy": "在此处进行的更改会让此 Agent 拥有模板的独立副本 — 即时保存；原模板和其他 Agent 不受影响，并且随时可以重置回原始模板。",
+      "config_file_info": "以 {{filename}} 保存在共享的代理文件夹中。",
+      "used_by_count": "{{count}} 个代理在用",
+      "used_by_this_agent_only": "只有这个代理在用",
+      "no_model_pinned": "没有固定模型 —— 用账号默认的",
+      "model_hint": "在模板里固定。改动会立刻保存；这个代理可以在“模型”里覆盖它。",
+      "auto_approved_hint": "不用先问你就会运行。",
+      "prompt_lives_in_a_file": "这些指令放在一个文件里，不在模板本身。",
+      "prompt_truncated": "只显示前 {{count}} 个字符 —— 剩下的要打开文件看。",
+      "show_more": "还有 {{count}} 个",
+      "show_fewer": "收起",
+      "loading": "正在加载模板……",
+      "could_not_load": "没能加载这个模板的配置。",
+      "guardrails_hint": "永远不允许运行的命令。",
+      "save_failed": "该更改未能保存 — 请重试。"
+    },
     "pinSurfaceButton": {
       "pin_limit_reached": "侧边栏最多置顶 {{n}} 项 - 请先取消置顶一项"
     },
@@ -8078,6 +8114,12 @@
       "stream_error_max_duration": "口述已达到时长上限。重新开始录制即可继续。",
       "stream_error_model_missing": "语音模型还没准备好。请在语音转文字设置中下载它，然后重试。",
       "stream_error_session_failed": "口述会话失败。请重新录制。"
+    },
+    "templateSource": {
+      "built_in": "内置",
+      "package": "包",
+      "custom": "自定义",
+      "private_copy": "私有副本"
     }
   },
   "nav": {
@@ -9040,20 +9082,20 @@
         "inject_context": "注入上下文",
         "knowledge_results_for_query": "知识结果：“{{query}}”",
         "no_knowledge_found_for_query": "未找到匹配的知识：“{{query}}”",
-        "retry": "重试",
-        "search_failed_for_query": "知识搜索失败：“{{query}}”",
         "searching_knowledge_for_query": "正在搜索知识：“{{query}}”…",
         "selected": "已选 ·",
-        "tokens": "个令牌"
+        "tokens": "个令牌",
+        "retry": "重试",
+        "search_failed_for_query": "知识搜索失败：“{{query}}”"
       },
       "mcpInfoButton": {
         "agent_loads_only_its_own_mcp_servers": "代理“{{name}}”仅加载自己的 MCP 服务器。",
         "disabled": "已禁用",
-        "load_failed": "无法加载 MCP 服务器",
         "mcp_servers_count": "MCP 服务器（{{count}}/{{total}}）",
-        "mode_load_failed": "无法读取 Tool Search 模式，当前显示的是默认值",
         "none_loaded": "未加载任何项",
-        "session_mcp_servers": "会话 MCP 服务器"
+        "session_mcp_servers": "会话 MCP 服务器",
+        "load_failed": "无法加载 MCP 服务器",
+        "mode_load_failed": "无法读取 Tool Search 模式，当前显示的是默认值"
       },
       "mcpOAuthBanner": {
         "authenticated": "已认证。",
@@ -9420,10 +9462,10 @@
         "close_search": "关闭搜索",
         "ctx_add_to_chat": "添加到聊天",
         "filter_placeholder": "筛选文件…",
-        "git_status_failed": "无法读取 Git 状态",
         "refresh": "刷新",
         "resize": "调整文件浏览器大小",
-        "tree_mode": "文件列表模式"
+        "tree_mode": "文件列表模式",
+        "git_status_failed": "无法读取 Git 状态"
       },
       "filesHome": {
         "no_project_dir": "此聊天未设置项目目录",
@@ -10182,7 +10224,6 @@
     },
     "developerPage": {
       "developer": "开发者",
-      "feature_previews_moved": "功能预览已移至“设置 > 开发者”",
       "tabs": {
         "agentBackend": {
           "description": "新会话启动哪个代理 — Kiro CLI、Claude Code 或 KAS",
@@ -10224,7 +10265,8 @@
           "description": "会话启动延迟（p50/p90）与 MCP/技能加速指标",
           "label": "遥测"
         }
-      }
+      },
+      "feature_previews_moved": "功能预览已移至“设置 > 开发者”"
     },
     "discoverPage": {
       "subtitle": "浏览并安装智能体应用",
@@ -10403,11 +10445,11 @@
       "session_color_hint": "由此代理启动的会话在自身没有颜色时使用此颜色。修改它会重新为这些会话着色。留空则不使用代理颜色。",
       "session_color_hex": "会话颜色十六进制值",
       "session_color_clear": "清除",
+      "editor_options_load_failed": "无法加载团队编辑器的工作区、模板和记忆存储选项。",
       "discard_unsaved_changes": "放弃未保存的更改？",
       "discard_unsaved_body": "此团队有从未保存的编辑内容。现在关闭将会丢弃它们。",
       "discard_confirm": "放弃更改",
-      "discard_also_crew_edits": "此团队其他未保存的编辑内容也会随之丢弃。",
-      "editor_options_load_failed": "无法加载团队编辑器的工作区、模板和记忆存储选项。"
+      "discard_also_crew_edits": "此团队其他未保存的编辑内容也会随之丢弃。"
     },
     "knowledge": {
       "detailView": {
@@ -10995,13 +11037,13 @@
         "session_timeout": "会话超时",
         "subagent_settings": "子代理设置",
         "takes_effect_on_next_session_range_60_86400s": "下次会话生效。范围：60–86400 秒。",
-        "tool_call_budget_per_subagent_1_1000_default_100": "每个子代理的工具调用预算（1–1000）。默认值：100。",
         "used_by": "使用者",
         "using_global_memory_settings": "使用全局记忆设置",
         "using_legacy_mode_agent_default_agent_as_agent_t": "使用旧版模式 — 以 agent.default_agent 作为代理模板",
         "warm_pool": "预热池",
         "workspace": "工作区",
-        "workspaces": "工作区"
+        "workspaces": "工作区",
+        "tool_call_budget_per_subagent_1_1000_default_100": "每个子代理的工具调用预算（1–1000）。默认值：100。"
       },
       "mcpTab": {
         "actions": "操作",
@@ -12455,13 +12497,13 @@
       "developerPanel": {
         "developer_mode": "开发者模式",
         "developer_tools": "开发者工具",
-        "feature_previews": "功能预览",
-        "feature_previews_desc": "尚未发布的功能和页面。在此开启之前，这些页面不会出现在侧边栏和全局搜索中；下面的开关本身则可以通过设置搜索找到。设置仅对本设备生效，且这些内容有意保留未完善的状态。",
         "gateway": "网关",
         "open_developer_page": "打开开发者页面",
         "run_a_local_gateway": "运行本地网关",
         "show_developer_page_in_sidebar_with_logs_system": "在侧边栏显示开发者页面，包含日志、系统指标与记忆内部信息",
-        "start_a_gateway_on_this_machine_turn_it_off_to_u": "在这台机器上启动网关。关闭后，{{productName}} 仅作为客户端使用，连接到你已配置的网关，而不在本机运行网关。将在下次打开应用时生效。"
+        "start_a_gateway_on_this_machine_turn_it_off_to_u": "在这台机器上启动网关。关闭后，{{productName}} 仅作为客户端使用，连接到你已配置的网关，而不在本机运行网关。将在下次打开应用时生效。",
+        "feature_previews": "功能预览",
+        "feature_previews_desc": "尚未发布的功能和页面。在此开启之前，这些页面不会出现在侧边栏和全局搜索中；下面的开关本身则可以通过设置搜索找到。设置仅对本设备生效，且这些内容有意保留未完善的状态。"
       },
       "discordPanel": {
         "allowed_server_channel_ids": "允许的服务器频道 ID",

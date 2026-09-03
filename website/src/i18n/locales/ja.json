@@ -125,10 +125,10 @@
       "streaming": "ストリーミング中"
     },
     "chatMessageList": {
+      "open_path": "{{path}} を開く",
       "copied": "コピーしました！",
       "copy": "コピー",
       "copy_failed": "コピーに失敗しました",
-      "open_path": "{{path}} を開く",
       "show_less": "表示を減らす",
       "show_more": "もっと表示"
     }
@@ -4706,7 +4706,6 @@
         "folder_delete_failed": "フォルダーを削除できませんでした。",
         "folder_create_failed": "フォルダーを作成できませんでした。",
         "folder_bad_name": "このフォルダー名には、ドライブが保存できない文字が含まれています。英数字、スペース、および . _ - ( ) + @ = は使用できます。",
-        "folder_deleted_other": "「{{name}}」を削除しました：{{count}} 個の項目。",
         "cancel": "キャンセル",
         "load_more": "さらに読み込む",
         "stat_this_month": "今月",
@@ -4797,7 +4796,6 @@
         "access_list_failed": "共有リンクを読み取れませんでした。",
         "access_forget_failed": "そのリンクを一覧から削除できませんでした。まだ一覧に残っています。",
         "keys_count_other": "キー {{count}} 個",
-        "keys_for_account": "{{name}} のキー",
         "key_healthy": "正常",
         "parent_folders": "上位フォルダー",
         "folder_actions": "フォルダーの操作",
@@ -4858,6 +4856,8 @@
         "rename_shared": "このファイルには有効な共有リンクがあります。名前を変更するとリンクが無効になります。共有を削除（または期限切れを待って）してから再試行してください。",
         "rename_failed": "ファイル名を変更できませんでした。再試行してください。",
         "rename_failed_named": "「{{name}}」の名前を変更できませんでした：{{reason}}",
+        "folder_deleted_other": "「{{name}}」を削除しました：{{count}} 個の項目。",
+        "keys_for_account": "{{name}} のキー",
         "library_add_empty": "アーティファクトはまだありません。Kiro が作成したものはここに表示され、クラウドにコピーできます。",
         "move_to": "フォルダーに移動…",
         "move_title": "「{{name}}」の移動先",
@@ -5058,17 +5058,10 @@
       "axis_tile": "背景",
       "cancel": "キャンセル",
       "customized_note": "カスタムの顔を使用中",
-      "edit_avatar": "アバターを編集",
-      "expr_hint": "それぞれの場面に別の顔と音を選べます。",
-      "expr_picture_note": "画像には変わる顔がないため、音だけが適用されます。",
-      "expr_reset_state": "リセット",
-      "expr_sound": "音",
       "field_hint": "このメンバーがどこでも見せる顔。",
       "field_label": "アバター",
-      "hint_customize": "このアバターを編集",
       "image_load_failed": "保存された画像を読み込めなかったため、デフォルトの顔を表示しています。",
       "mirror": "左右反転",
-      "mode_expressions": "表情",
       "mode_face": "おばけメーカー",
       "mode_picture": "画像",
       "opt_angry": "怒り眉",
@@ -5100,7 +5093,6 @@
       "opt_party": "パーティー帽",
       "opt_phones": "ヘッドホン",
       "opt_raised": "上がり眉",
-      "opt_same_as_idle": "いつもと同じ",
       "opt_sleepy": "ねむい",
       "opt_smile": "ほほえみ",
       "opt_smirk": "ニヤリ",
@@ -5117,16 +5109,6 @@
       "opt_wrench": "レンチ",
       "randomize": "ランダム",
       "reset_default": "デフォルトの顔に戻す",
-      "sound_blip": "ブリップ",
-      "sound_chime": "チャイム",
-      "sound_ding": "ディン",
-      "sound_pop": "ポップ",
-      "sound_preview": "この音を再生",
-      "sound_pulse": "パルス",
-      "sound_silent": "音なし",
-      "state_done": "完了",
-      "state_error": "失敗",
-      "state_working": "作業中",
       "tile_amber": "アンバー",
       "tile_bronze": "ブロンズ",
       "tile_coral": "コーラル",
@@ -5148,7 +5130,25 @@
       "upload_choose": "画像を選択…",
       "upload_hint": "ここに画像をドラッグ、または",
       "upload_note": "PNG・JPEG・WEBP。保存前に正方形に切り抜き、512 px に縮小されます。",
-      "upload_too_large": "ファイルが大きすぎます(最大 20 MB)。"
+      "upload_too_large": "ファイルが大きすぎます(最大 20 MB)。",
+      "expr_hint": "それぞれの場面に別の顔と音を選べます。",
+      "expr_picture_note": "画像には変わる顔がないため、音だけが適用されます。",
+      "expr_reset_state": "リセット",
+      "expr_sound": "音",
+      "mode_expressions": "表情",
+      "opt_same_as_idle": "いつもと同じ",
+      "sound_blip": "ブリップ",
+      "sound_chime": "チャイム",
+      "sound_ding": "ディン",
+      "sound_pop": "ポップ",
+      "sound_preview": "この音を再生",
+      "sound_pulse": "パルス",
+      "sound_silent": "音なし",
+      "state_done": "完了",
+      "state_error": "失敗",
+      "state_working": "作業中",
+      "edit_avatar": "アバターを編集",
+      "hint_customize": "このアバターを編集"
     },
     "crashNotice": {
       "diagnostics_were_saved_locally": "この端末に新しいクラッシュ記録を {{n}} 件保存しました。問題を報告する際に添付してください。",
@@ -5167,12 +5167,12 @@
       "pause_named": "{{name}} を一時停止",
       "paused": "一時停止中",
       "resume_named": "{{name}} を再開",
-      "retry": "再試行",
       "run_named_now": "{{name}} を今すぐ実行",
       "running": "実行しています",
       "schedule": "スケジュール",
       "schedules_that_run_this_crew_without_you_asking": "あなたが頼まなくてもこのエージェントを実行するスケジュール。上のトリガーとは別で、あちらはオーケストレーターがこのエージェントを選ぶ条件だけを決めます。",
-      "what_wakes_this_crew": "このエージェントを起動するもの"
+      "what_wakes_this_crew": "このエージェントを起動するもの",
+      "retry": "再試行"
     },
     "agentDropdownList": {
       "active_in_this_session": "このセッションでアクティブ",
@@ -5496,16 +5496,16 @@
       "next_cycle_due": "次のサイクルは実行待ち、現在のターン終了後に実行",
       "next_cycle_in": "次のサイクルまで {{time}}",
       "next_cycle_unscheduled": "次のサイクルは未定",
-      "retry": "再試行",
       "save": "保存",
       "seconds_between_nudges": "ナッジ間の秒数",
       "set_a_goal": "目標を設定",
       "start_loop": "ループ開始",
       "stop_loop": "ループ停止",
-      "watches_load_failed": "このセッションのウォッチを読み込めませんでした。",
       "watches_next": "次回",
       "watches_note": "実際のシグナルがあったときだけエージェントを起こします。管理は「スケジュール」ページから。",
-      "watches_title": "トークンを消費しない監視"
+      "watches_title": "トークンを消費しない監視",
+      "retry": "再試行",
+      "watches_load_failed": "このセッションのウォッチを読み込めませんでした。"
     },
     "bottomTerminalPanel": {
       "terminal_is_in_its_own_window": "ターミナルは別ウィンドウで開いています",
@@ -5552,9 +5552,6 @@
       "could_not_submit_that_decision_see_the_console_f": "その決定を送信できません — 詳細はコンソールを参照してください。",
       "detached_head_at": "{{branch}} で HEAD が切り離されています",
       "drag_to_resize_double_click_to_reset": "ドラッグしてリサイズ (ダブルクリックでリセット)",
-      "collapse_composer": "メッセージ入力を折りたたむ",
-      "collapse_composer_desc": "回答のために入力欄を隠します。下書きは保持されます",
-      "expand_composer": "メッセージ入力を表示",
       "file": "ファイル",
       "force_kill_discards_in_progress_work_and_queued": "強制終了 — 進行中の作業とキューに入れられたメッセージを破棄",
       "force_kill_session_discards_in_progress_work_and": "セッションを強制終了 (進行中の作業とキューに入れられたメッセージを破棄)",
@@ -5635,6 +5632,9 @@
       "following_global": "グローバル設定に従う（{{pct}}%）",
       "sketch": "スケッチ",
       "sketch_desc": "スケッチを描く。画像と編集可能なソースを添付します",
+      "collapse_composer": "メッセージ入力を折りたたむ",
+      "collapse_composer_desc": "回答のために入力欄を隠します。下書きは保持されます",
+      "expand_composer": "メッセージ入力を表示",
       "optimize_failed": "プロンプトを最適化できませんでした。元のテキストを復元しました。",
       "optimize_failed_elsewhere": "別のセッションで開始したプロンプトを最適化できませんでした。元のテキストはそのセッションに復元されています。",
       "more_actions": "その他の操作",
@@ -5649,14 +5649,14 @@
       "earlier_messages_open_session": "以前のメッセージ — セッション全体を開く（分割表示を閉じます）",
       "earlier_messages_unavailable": "以前のメッセージはこのセッションの履歴では利用できなくなりました。",
       "forked_from": "{{name}} からフォーク",
-      "history_load_failed": "このセッションのメッセージを読み込めませんでした。",
       "model_list": "モデルリスト",
-      "retry": "再試行",
       "session_ready_type_a_message_to_start": "セッション準備完了。メッセージを入力して開始してください。",
       "split_down": "下に分割",
       "split_right": "右に分割",
       "split_right_d": "右に分割 (⌘D)",
-      "type_to_filter": "フィルタリングするには入力…"
+      "type_to_filter": "フィルタリングするには入力…",
+      "history_load_failed": "このセッションのメッセージを読み込めませんでした。",
+      "retry": "再試行"
     },
     "cliPanel": {
       "copied": "コピーしました",
@@ -5795,9 +5795,7 @@
       "cancel": "キャンセル",
       "collapse_comments": "コメントを折りたたむ",
       "comment": "コメント",
-      "comment_change_failed": "そのコメントの変更を保存できませんでした。",
       "comments": "コメント",
-      "comments_load_failed": "コメントを読み込めませんでした。",
       "delete": "削除",
       "edit": "編集",
       "edit_comment": "コメントを編集…",
@@ -5821,7 +5819,9 @@
       "scroll_to_the_highlighted_text": "ハイライト済みのテキストまでスクロール",
       "shared_comment": "共有コメント",
       "show": "表示",
-      "unknown": "不明"
+      "unknown": "不明",
+      "comment_change_failed": "そのコメントの変更を保存できませんでした。",
+      "comments_load_failed": "コメントを読み込めませんでした。"
     },
     "computerUseLiveView": {
       "close": "閉じる",
@@ -5905,10 +5905,10 @@
     },
     "embedTabStrip": {
       "close_tab": "タブを閉じる",
-      "new_chat_failed": "新しいチャットを作成できませんでした。",
       "new_tab": "新規タブ",
       "new_tab_shift_click_for_new_chat": "新規タブ（新しいチャット用 Shift+クリック）",
-      "sessions": "セッション"
+      "sessions": "セッション",
+      "new_chat_failed": "新しいチャットを作成できませんでした。"
     },
     "errorBoundary": {
       "reload_page": "ページを再読み込み",
@@ -5928,7 +5928,6 @@
       "error": "エラー",
       "failed_to_load": "読み込みに失敗しました",
       "job_name": "ジョブ名",
-      "jobs_load_failed": "どのジョブがまだ存在するか確認できなかったため、この履歴では削除済みジョブが表示されていません。",
       "next": "次へ",
       "no_execution_history_yet": "実行履歴はまだありません",
       "ok": "OK",
@@ -5938,7 +5937,8 @@
       "summary": "概要",
       "timeout": "タイムアウト",
       "timestamp": "タイムスタンプ",
-      "trigger": "トリガー"
+      "trigger": "トリガー",
+      "jobs_load_failed": "どのジョブがまだ存在するか確認できなかったため、この履歴では削除済みジョブが表示されていません。"
     },
     "feedbackPill": {
       "insider": "Insider ビルド",
@@ -6518,10 +6518,10 @@
       "zoom_out": "ズームアウト (-)",
       "click_to_browse_shift_click_to_copy_path": "クリックして参照 / Shift+クリックでパスをコピー",
       "click_to_open_shift_click_to_copy_path": "クリックして開く / Shift+クリックでパスをコピー",
+      "mermaid_render_failed": "この図を描画できませんでした。代わりにソースを表示します。",
       "copy_diagram_source": "図のソースをコピー",
       "diagram_source": "図のソース",
-      "copy_failed": "コピーできませんでした",
-      "mermaid_render_failed": "この図を描画できませんでした。代わりにソースを表示します。"
+      "copy_failed": "コピーできませんでした"
     },
     "markdownToc": {
       "contents": "目次",
@@ -7920,6 +7920,42 @@
       "already_attached": "添付済み — キャンバスを編集すると再度スケッチできます",
       "load_failed": "スケッチパッドを読み込めませんでした。接続を確認して再度開いてください"
     },
+    "agentTemplateDetail": {
+      "template_prefix": "テンプレート",
+      "customized": "カスタマイズ済み",
+      "changes_count_other": "{{count}} 件の変更",
+      "change_was": "以前: {{value}}",
+      "change_not_set": "未設定",
+      "reset_my_changes": "自分の変更をリセット",
+      "reset_confirm_title": "このエージェントを 「{{name}}」 にリセットしますか？",
+      "reset_confirm_body": "あなたの変更 — 「{{fields}}」 — は破棄されます。このエージェントは 「{{name}}」 テンプレートをそのまま使います。",
+      "discard_my_changes": "自分の変更を破棄",
+      "save_as_new_template": "新しいテンプレートとして保存…",
+      "publish_title": "新しいテンプレートとして保存",
+      "publish_hint": "このエージェントの定義を、他のエージェントの出発点になるテンプレートとして公開します。この名前がテンプレートの恒久的な識別名になります。",
+      "publish_name_label": "テンプレート名",
+      "publish_name_rule": "文字、数字、ピリオド、ダッシュ、アンダースコアを使えます（最大 63 文字）。",
+      "publish_action": "テンプレートを保存",
+      "switch_confirm_title": "「{{name}}」 に切り替えますか？",
+      "switch_confirm_body": "「{{origin}}」 へのあなたの変更（「{{fields}}」）は破棄されます。このエージェントは 「{{name}}」 テンプレートをそのまま使います。",
+      "discard_and_switch": "変更を破棄して切り替え",
+      "based_on_hint": "{{name}} テンプレートに基づいています — 編集はこのエージェントにのみ適用され、その場で保存されます。",
+      "edits_make_own_copy": "ここでの変更により、このエージェントはテンプレートの独自コピーを持ちます — その場で保存され、元のテンプレートや他のエージェントには影響しません。いつでも元のテンプレートにリセットできます。",
+      "config_file_info": "共有エージェントフォルダーに {{filename}} として保存されます。",
+      "used_by_count": "{{count}} 個のエージェントが使用",
+      "used_by_this_agent_only": "このエージェントだけが使用",
+      "no_model_pinned": "モデル指定なし — アカウントの既定",
+      "model_hint": "テンプレートで指定されています。すぐに保存され、このエージェントはモデルで上書きできます。",
+      "auto_approved_hint": "確認なしで実行されます。",
+      "prompt_lives_in_a_file": "この指示はテンプレート本体ではなくファイルにあります。",
+      "prompt_truncated": "先頭 {{count}} 文字を表示しています — 残りはファイルを開いてください。",
+      "show_more": "他 {{count}} 件",
+      "show_fewer": "表示を減らす",
+      "loading": "テンプレートを読み込み中…",
+      "could_not_load": "このテンプレートの設定を読み込めませんでした。",
+      "guardrails_hint": "実行が許可されていないコマンド。",
+      "save_failed": "変更を保存できませんでした — もう一度お試しください。"
+    },
     "pinSurfaceButton": {
       "pin_limit_reached": "サイドバーにピン留めできるのは最大 {{n}} 個です - まず1つ解除してください"
     },
@@ -8078,6 +8114,12 @@
       "stream_error_max_duration": "口述が長さの上限に達しました。続けるには新しい録音を開始してください。",
       "stream_error_model_missing": "音声モデルの準備がまだできていません。音声入力の設定でダウンロードしてから、もう一度お試しください。",
       "stream_error_session_failed": "口述セッションが失敗しました。もう一度録音してみてください。"
+    },
+    "templateSource": {
+      "built_in": "組み込み",
+      "package": "パッケージ",
+      "custom": "カスタム",
+      "private_copy": "プライベートコピー"
     }
   },
   "nav": {
@@ -9040,20 +9082,20 @@
         "inject_context": "コンテキストを追加",
         "knowledge_results_for_query": "「{{query}}」のナレッジ検索結果",
         "no_knowledge_found_for_query": "「{{query}}」のナレッジが見つかりません",
-        "retry": "再試行",
-        "search_failed_for_query": "「{{query}}」のナレッジ検索に失敗しました",
         "searching_knowledge_for_query": "「{{query}}」のナレッジを検索中…",
         "selected": "選択済み ·",
-        "tokens": "トークン"
+        "tokens": "トークン",
+        "retry": "再試行",
+        "search_failed_for_query": "「{{query}}」のナレッジ検索に失敗しました"
       },
       "mcpInfoButton": {
         "agent_loads_only_its_own_mcp_servers": "エージェント「{{name}}」は自身の MCP サーバーのみを読み込みます。",
         "disabled": "無効",
-        "load_failed": "MCP サーバーを読み込めませんでした",
         "mcp_servers_count": "MCP サーバー ({{count}}/{{total}})",
-        "mode_load_failed": "Tool Search モードを読み取れませんでした。既定値を表示しています",
         "none_loaded": "読み込みなし",
-        "session_mcp_servers": "セッションの MCP サーバー"
+        "session_mcp_servers": "セッションの MCP サーバー",
+        "load_failed": "MCP サーバーを読み込めませんでした",
+        "mode_load_failed": "Tool Search モードを読み取れませんでした。既定値を表示しています"
       },
       "mcpOAuthBanner": {
         "authenticated": "認証されました。",
@@ -9420,10 +9462,10 @@
         "close_search": "検索を閉じる",
         "ctx_add_to_chat": "チャットに追加",
         "filter_placeholder": "ファイルを絞り込む…",
-        "git_status_failed": "Git の状態を読み取れませんでした",
         "refresh": "更新",
         "resize": "ファイルブラウザーのサイズを変更",
-        "tree_mode": "ファイル一覧モード"
+        "tree_mode": "ファイル一覧モード",
+        "git_status_failed": "Git の状態を読み取れませんでした"
       },
       "filesHome": {
         "no_project_dir": "このチャットにはプロジェクトディレクトリが設定されていません",
@@ -10182,7 +10224,6 @@
     },
     "developerPage": {
       "developer": "デベロッパー",
-      "feature_previews_moved": "機能プレビューは「設定 > デベロッパー」に移動しました",
       "tabs": {
         "agentBackend": {
           "description": "新しいセッションが起動するエージェント — Kiro CLI、Claude Code、KAS",
@@ -10224,7 +10265,8 @@
           "description": "クレジット支出、コンテキストコスト、セッション起動レイテンシー",
           "label": "テレメトリー"
         }
-      }
+      },
+      "feature_previews_moved": "機能プレビューは「設定 > デベロッパー」に移動しました"
     },
     "discoverPage": {
       "subtitle": "エージェンティックアプリの閲覧とインストール",
@@ -10403,11 +10445,11 @@
       "session_color_hint": "このエージェントが開始したセッションは、セッション自身の色がない限りこの色を使用します。変更するとそれらのセッションが再着色されます。エージェントの色を設定しない場合は空欄にしてください。",
       "session_color_hex": "セッションの色の16進値",
       "session_color_clear": "クリア",
+      "editor_options_load_failed": "クルーエディターのワークスペース、テンプレート、メモリストアの選択肢を読み込めませんでした。",
       "discard_unsaved_changes": "保存していない変更を破棄しますか？",
       "discard_unsaved_body": "このクルーには保存されていない編集があります。今閉じると破棄されます。",
       "discard_confirm": "変更を破棄",
-      "discard_also_crew_edits": "このクルーの他の未保存の編集も一緒に破棄されます。",
-      "editor_options_load_failed": "クルーエディターのワークスペース、テンプレート、メモリストアの選択肢を読み込めませんでした。"
+      "discard_also_crew_edits": "このクルーの他の未保存の編集も一緒に破棄されます。"
     },
     "knowledge": {
       "detailView": {
@@ -10995,13 +11037,13 @@
         "session_timeout": "セッションタイムアウト",
         "subagent_settings": "サブエージェント設定",
         "takes_effect_on_next_session_range_60_86400s": "次のセッションで有効になります。範囲: 60〜86400秒。",
-        "tool_call_budget_per_subagent_1_1000_default_100": "サブエージェントあたりのツール呼び出し予算（1〜1000）。デフォルト: 100。",
         "used_by": "使用者",
         "using_global_memory_settings": "グローバルメモリ設定を使用中",
         "using_legacy_mode_agent_default_agent_as_agent_t": "レガシーモード使用中 — エージェントテンプレートとして agent.default_agent を使用",
         "warm_pool": "ウォームプール",
         "workspace": "ワークスペース",
-        "workspaces": "ワークスペース"
+        "workspaces": "ワークスペース",
+        "tool_call_budget_per_subagent_1_1000_default_100": "サブエージェントあたりのツール呼び出し予算（1〜1000）。デフォルト: 100。"
       },
       "mcpTab": {
         "actions": "アクション",
@@ -12455,13 +12497,13 @@
       "developerPanel": {
         "developer_mode": "開発者モード",
         "developer_tools": "開発者ツール",
-        "feature_previews": "機能プレビュー",
-        "feature_previews_desc": "未リリースの機能とページです。ここでオンにするまで、ページ自体はサイドバーと「すべてから検索」には表示されませんが、下のスイッチは設定の検索で見つかります。この設定はこのデバイスのみに適用され、内容は意図的に未完成のままです。",
         "gateway": "ゲートウェイ",
         "open_developer_page": "開発者ページを開く",
         "run_a_local_gateway": "ローカルゲートウェイを実行する",
         "show_developer_page_in_sidebar_with_logs_system": "サイドバーに開発者ページを表示（ログ、システムメトリクス、メモリ内部情報を含む）",
-        "start_a_gateway_on_this_machine_turn_it_off_to_u": "このマシンでゲートウェイを起動します。オフにすると {{productName}} をクライアントとしてのみ使用し、ここで起動する代わりに設定済みのゲートウェイに接続します。次回アプリを開いたときに反映されます。"
+        "start_a_gateway_on_this_machine_turn_it_off_to_u": "このマシンでゲートウェイを起動します。オフにすると {{productName}} をクライアントとしてのみ使用し、ここで起動する代わりに設定済みのゲートウェイに接続します。次回アプリを開いたときに反映されます。",
+        "feature_previews": "機能プレビュー",
+        "feature_previews_desc": "未リリースの機能とページです。ここでオンにするまで、ページ自体はサイドバーと「すべてから検索」には表示されませんが、下のスイッチは設定の検索で見つかります。この設定はこのデバイスのみに適用され、内容は意図的に未完成のままです。"
       },
       "discordPanel": {
         "allowed_server_channel_ids": "許可されたサーバーチャネル ID",

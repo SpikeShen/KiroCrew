@@ -128,10 +128,10 @@
       "streaming": "Streaming"
     },
     "chatMessageList": {
+      "open_path": "{{path}} öffnen",
       "copied": "Kopiert!",
       "copy": "Kopieren",
       "copy_failed": "Kopieren fehlgeschlagen",
-      "open_path": "{{path}} öffnen",
       "show_less": "Weniger anzeigen",
       "show_more": "Mehr anzeigen"
     }
@@ -4784,8 +4784,6 @@
         "folder_delete_failed": "Der Ordner konnte nicht gelöscht werden.",
         "folder_create_failed": "Der Ordner konnte nicht erstellt werden.",
         "folder_bad_name": "Dieser Ordnername enthält Zeichen, die das Laufwerk nicht speichern kann. Buchstaben, Ziffern, Leerzeichen und . _ - ( ) + @ = sind sicher.",
-        "folder_deleted_one": "„{{name}}“ gelöscht: {{count}} Element.",
-        "folder_deleted_other": "„{{name}}“ gelöscht: {{count}} Elemente.",
         "cancel": "Abbrechen",
         "load_more": "Mehr laden",
         "stat_this_month": "Diesen Monat",
@@ -4877,7 +4875,6 @@
         "access_forget_failed": "Dieser Link konnte nicht aus der Liste entfernt werden. Er ist weiterhin aufgeführt.",
         "keys_count_one": "{{count}} Schlüssel",
         "keys_count_other": "{{count}} Schlüssel",
-        "keys_for_account": "Schlüssel für {{name}}",
         "key_healthy": "Fehlerfrei",
         "parent_folders": "Übergeordnete Ordner",
         "folder_actions": "Ordneraktionen",
@@ -4939,6 +4936,9 @@
         "rename_shared": "Diese Datei hat einen aktiven Freigabelink — eine Umbenennung würde den Link ungültig machen. Entfernen Sie die Freigabe (oder lassen Sie sie ablaufen) und versuchen Sie es erneut.",
         "rename_failed": "Die Datei konnte nicht umbenannt werden. Versuchen Sie es erneut.",
         "rename_failed_named": "„{{name}}“ konnte nicht umbenannt werden: {{reason}}",
+        "folder_deleted_one": "„{{name}}“ gelöscht: {{count}} Element.",
+        "folder_deleted_other": "„{{name}}“ gelöscht: {{count}} Elemente.",
+        "keys_for_account": "Schlüssel für {{name}}",
         "library_add_empty": "Noch keine Artefakte. Was Kiro für Sie erstellt, erscheint hier und kann in die Cloud kopiert werden.",
         "move_to": "In Ordner verschieben…",
         "move_title": "„{{name}}“ verschieben nach",
@@ -5147,17 +5147,10 @@
       "axis_tile": "Hintergrund",
       "cancel": "Abbrechen",
       "customized_note": "Eigenes Gesicht in Verwendung",
-      "edit_avatar": "Avatar bearbeiten",
-      "expr_hint": "Wähle für jeden Moment ein anderes Gesicht und einen Ton.",
-      "expr_picture_note": "Ein Bild hat kein Gesicht, das sich ändern kann – es gelten nur die Töne.",
-      "expr_reset_state": "Zurücksetzen",
-      "expr_sound": "Ton",
       "field_hint": "Das Gesicht dieses Mitglieds überall, wo es erscheint.",
       "field_label": "Avatar",
-      "hint_customize": "Diesen Avatar bearbeiten",
       "image_load_failed": "Das gespeicherte Bild konnte nicht geladen werden — stattdessen wird das Standardgesicht angezeigt.",
       "mirror": "Richtung spiegeln",
-      "mode_expressions": "Ausdrücke",
       "mode_face": "Geistergesicht",
       "mode_picture": "Bild",
       "opt_angry": "Zornig",
@@ -5189,7 +5182,6 @@
       "opt_party": "Partyhut",
       "opt_phones": "Kopfhörer",
       "opt_raised": "Hochgezogen",
-      "opt_same_as_idle": "Wie sonst",
       "opt_sleepy": "Schläfrig",
       "opt_smile": "Lächeln",
       "opt_smirk": "Schmunzeln",
@@ -5206,16 +5198,6 @@
       "opt_wrench": "Schraubenschlüssel",
       "randomize": "Zufällig",
       "reset_default": "Auf das Standardgesicht zurücksetzen",
-      "sound_blip": "Blip",
-      "sound_chime": "Glockenspiel",
-      "sound_ding": "Ding",
-      "sound_pop": "Pop",
-      "sound_preview": "Diesen Ton abspielen",
-      "sound_pulse": "Puls",
-      "sound_silent": "Kein Ton",
-      "state_done": "Fertig",
-      "state_error": "Fehlgeschlagen",
-      "state_working": "Arbeitet",
       "tile_amber": "Bernstein",
       "tile_bronze": "Bronze",
       "tile_coral": "Koralle",
@@ -5237,7 +5219,25 @@
       "upload_choose": "Bild auswählen …",
       "upload_hint": "Bild hierher ziehen, oder",
       "upload_note": "PNG, JPEG oder WEBP. Wird vor dem Speichern quadratisch zugeschnitten und auf 512 px verkleinert.",
-      "upload_too_large": "Die Datei ist zu groß (max. 20 MB)."
+      "upload_too_large": "Die Datei ist zu groß (max. 20 MB).",
+      "expr_hint": "Wähle für jeden Moment ein anderes Gesicht und einen Ton.",
+      "expr_picture_note": "Ein Bild hat kein Gesicht, das sich ändern kann – es gelten nur die Töne.",
+      "expr_reset_state": "Zurücksetzen",
+      "expr_sound": "Ton",
+      "mode_expressions": "Ausdrücke",
+      "opt_same_as_idle": "Wie sonst",
+      "sound_blip": "Blip",
+      "sound_chime": "Glockenspiel",
+      "sound_ding": "Ding",
+      "sound_pop": "Pop",
+      "sound_preview": "Diesen Ton abspielen",
+      "sound_pulse": "Puls",
+      "sound_silent": "Kein Ton",
+      "state_done": "Fertig",
+      "state_error": "Fehlgeschlagen",
+      "state_working": "Arbeitet",
+      "edit_avatar": "Avatar bearbeiten",
+      "hint_customize": "Diesen Avatar bearbeiten"
     },
     "crashNotice": {
       "diagnostics_were_saved_locally": "Neue auf diesem Gerät gespeicherte Absturzberichte: {{n}}. Fügen Sie sie Ihrer Fehlermeldung bei.",
@@ -5256,12 +5256,12 @@
       "pause_named": "{{name}} pausieren",
       "paused": "pausiert",
       "resume_named": "{{name}} fortsetzen",
-      "retry": "Wiederholen",
       "run_named_now": "{{name}} jetzt ausführen",
       "running": "läuft",
       "schedule": "Zeitplan",
       "schedules_that_run_this_crew_without_you_asking": "Zeitpläne, die diesen Agenten ausführen, ohne dass du fragst. Getrennt von Triggers oben, das nur entscheidet, wann der Orchestrator diesen Agenten auswählt.",
-      "what_wakes_this_crew": "Was diesen Agenten weckt"
+      "what_wakes_this_crew": "Was diesen Agenten weckt",
+      "retry": "Wiederholen"
     },
     "kiroAccountModal": {
       "account_details_unavailable": "Kontodetails sind nicht verfügbar",
@@ -5589,16 +5589,16 @@
       "next_cycle_due": "Nächster Zyklus fällig, startet nach dem aktuellen Zug",
       "next_cycle_in": "Nächster Zyklus in {{time}}",
       "next_cycle_unscheduled": "Nächster Zyklus noch nicht geplant",
-      "retry": "Wiederholen",
       "save": "Speichern",
       "seconds_between_nudges": "Sekunden zwischen Anstößen",
       "set_a_goal": "Ein Ziel festlegen",
       "start_loop": "Schleife starten",
       "stop_loop": "Schleife stoppen",
-      "watches_load_failed": "Die Watches dieser Sitzung konnten nicht geladen werden.",
       "watches_next": "nächste",
       "watches_note": "Sie wecken den Agenten nur bei einem echten Signal. Verwaltung auf der Seite „Zeitplan“.",
-      "watches_title": "Überwachungen ohne Tokenverbrauch"
+      "watches_title": "Überwachungen ohne Tokenverbrauch",
+      "retry": "Wiederholen",
+      "watches_load_failed": "Die Watches dieser Sitzung konnten nicht geladen werden."
     },
     "bottomTerminalPanel": {
       "close_terminal": "Terminal schließen",
@@ -5645,9 +5645,6 @@
       "could_not_submit_that_decision_see_the_console_f": "Entscheidung konnte nicht übermittelt werden — Details in der Konsole.",
       "detached_head_at": "Detached HEAD bei {{branch}}",
       "drag_to_resize_double_click_to_reset": "Ziehen zum Ändern der Größe (Doppelklick zum Zurücksetzen)",
-      "collapse_composer": "Nachrichteneingabe einklappen",
-      "collapse_composer_desc": "Blendet das Feld aus, damit die Antwort Platz hat; der Entwurf bleibt erhalten",
-      "expand_composer": "Nachrichteneingabe anzeigen",
       "file": "Datei",
       "force_kill_discards_in_progress_work_and_queued": "Zwangsweise beenden — laufende Arbeit und wartende Nachrichten werden verworfen",
       "force_kill_session_discards_in_progress_work_and": "Sitzung zwangsweise beenden (laufende Arbeit und wartende Nachrichten werden verworfen)",
@@ -5728,6 +5725,9 @@
       "following_global": "Folgt global ({{pct}} %)",
       "sketch": "Skizze",
       "sketch_desc": "Skizze zeichnen; hängt ein Bild plus bearbeitbare Quelle an",
+      "collapse_composer": "Nachrichteneingabe einklappen",
+      "collapse_composer_desc": "Blendet das Feld aus, damit die Antwort Platz hat; der Entwurf bleibt erhalten",
+      "expand_composer": "Nachrichteneingabe anzeigen",
       "optimize_failed": "Der Prompt konnte nicht optimiert werden. Der ursprüngliche Text wurde wiederhergestellt.",
       "optimize_failed_elsewhere": "Der in einer anderen Sitzung gestartete Prompt konnte nicht optimiert werden. Der ursprüngliche Text wurde dort wiederhergestellt.",
       "more_actions": "Weitere Aktionen",
@@ -5742,14 +5742,14 @@
       "earlier_messages_open_session": "Frühere Nachrichten — vollständige Sitzung öffnen (schließt die geteilte Ansicht)",
       "earlier_messages_unavailable": "Frühere Nachrichten sind im Verlauf dieser Sitzung nicht mehr verfügbar.",
       "forked_from": "Verzweigt von {{name}}",
-      "history_load_failed": "Die Nachrichten dieser Sitzung konnten nicht geladen werden.",
       "model_list": "Modellliste",
-      "retry": "Wiederholen",
       "session_ready_type_a_message_to_start": "Sitzung bereit. Geben Sie eine Nachricht ein, um zu beginnen.",
       "split_down": "Nach unten teilen",
       "split_right": "Nach rechts teilen",
       "split_right_d": "Nach rechts teilen (⌘D)",
-      "type_to_filter": "Zum Filtern tippen…"
+      "type_to_filter": "Zum Filtern tippen…",
+      "history_load_failed": "Die Nachrichten dieser Sitzung konnten nicht geladen werden.",
+      "retry": "Wiederholen"
     },
     "cliPanel": {
       "copied": "Kopiert",
@@ -5890,9 +5890,7 @@
       "cancel": "Abbrechen",
       "collapse_comments": "Kommentare einklappen",
       "comment": "Kommentar",
-      "comment_change_failed": "Diese Kommentaränderung konnte nicht gespeichert werden.",
       "comments": "Kommentare",
-      "comments_load_failed": "Kommentare konnten nicht geladen werden.",
       "delete": "Löschen",
       "edit": "Bearbeiten",
       "edit_comment": "Kommentar bearbeiten…",
@@ -5916,7 +5914,9 @@
       "scroll_to_the_highlighted_text": "Zum markierten Text scrollen",
       "shared_comment": "Geteilter Kommentar",
       "show": "Anzeigen",
-      "unknown": "Unbekannt"
+      "unknown": "Unbekannt",
+      "comment_change_failed": "Diese Kommentaränderung konnte nicht gespeichert werden.",
+      "comments_load_failed": "Kommentare konnten nicht geladen werden."
     },
     "computerUseLiveView": {
       "close": "Schließen",
@@ -6001,10 +6001,10 @@
     },
     "embedTabStrip": {
       "close_tab": "Tab schließen",
-      "new_chat_failed": "Es konnte kein neuer Chat erstellt werden.",
       "new_tab": "Neuer Tab",
       "new_tab_shift_click_for_new_chat": "Neuer Tab (Shift+Klick für neuen Chat)",
-      "sessions": "Sitzungen"
+      "sessions": "Sitzungen",
+      "new_chat_failed": "Es konnte kein neuer Chat erstellt werden."
     },
     "errorBoundary": {
       "reload_page": "Seite neu laden",
@@ -6024,7 +6024,6 @@
       "error": "Fehler",
       "failed_to_load": "Laden fehlgeschlagen",
       "job_name": "Job-Name",
-      "jobs_load_failed": "Es konnte nicht geprüft werden, welche Jobs noch existieren, daher sind gelöschte Jobs in diesem Verlauf nicht markiert.",
       "next": "Weiter",
       "no_execution_history_yet": "Noch kein Ausführungsverlauf",
       "ok": "OK",
@@ -6034,7 +6033,8 @@
       "summary": "Zusammenfassung",
       "timeout": "Timeout",
       "timestamp": "Zeitstempel",
-      "trigger": "Auslöser"
+      "trigger": "Auslöser",
+      "jobs_load_failed": "Es konnte nicht geprüft werden, welche Jobs noch existieren, daher sind gelöschte Jobs in diesem Verlauf nicht markiert."
     },
     "feedbackPill": {
       "insider": "Insider",
@@ -6620,10 +6620,10 @@
       "zoom_out": "Verkleinern (-)",
       "click_to_browse_shift_click_to_copy_path": "Klicken zum Durchsuchen / Shift+Klick zum Kopieren des Pfads",
       "click_to_open_shift_click_to_copy_path": "Klicken zum Öffnen / Shift+Klick zum Kopieren des Pfads",
+      "mermaid_render_failed": "Dieses Diagramm konnte nicht gerendert werden. Stattdessen wird der Quelltext angezeigt.",
       "copy_diagram_source": "Diagrammquelltext kopieren",
       "diagram_source": "Diagrammquelltext",
-      "copy_failed": "Kopieren fehlgeschlagen",
-      "mermaid_render_failed": "Dieses Diagramm konnte nicht gerendert werden. Stattdessen wird der Quelltext angezeigt."
+      "copy_failed": "Kopieren fehlgeschlagen"
     },
     "markdownToc": {
       "contents": "Inhalt",
@@ -8030,6 +8030,43 @@
       "already_attached": "Angehängt — Canvas bearbeiten, um erneut zu skizzieren",
       "load_failed": "Skizzenblock konnte nicht geladen werden – Verbindung prüfen und erneut öffnen"
     },
+    "agentTemplateDetail": {
+      "template_prefix": "Vorlage",
+      "customized": "Angepasst",
+      "changes_count_one": "{{count}} Änderung",
+      "changes_count_other": "{{count}} Änderungen",
+      "change_was": "vorher: {{value}}",
+      "change_not_set": "nicht festgelegt",
+      "reset_my_changes": "Meine Änderungen zurücksetzen",
+      "reset_confirm_title": "Diesen Agenten auf „{{name}}“ zurücksetzen?",
+      "reset_confirm_body": "Deine Änderungen — „{{fields}}“ — werden verworfen. Dieser Agent verwendet die Vorlage „{{name}}“ unverändert.",
+      "discard_my_changes": "Meine Änderungen verwerfen",
+      "save_as_new_template": "Als neue Vorlage speichern…",
+      "publish_title": "Als neue Vorlage speichern",
+      "publish_hint": "Veröffentlicht die Definition dieses Agenten als Vorlage, von der andere Agenten ausgehen können. Der Name wird zur dauerhaften Identität der Vorlage.",
+      "publish_name_label": "Vorlagenname",
+      "publish_name_rule": "Verwende Buchstaben, Ziffern, Punkte, Bindestriche oder Unterstriche (bis zu 63 Zeichen).",
+      "publish_action": "Vorlage speichern",
+      "switch_confirm_title": "Zu „{{name}}“ wechseln?",
+      "switch_confirm_body": "Deine Änderungen an „{{origin}}“ („{{fields}}“) werden verworfen. Dieser Agent verwendet die Vorlage „{{name}}“ unverändert.",
+      "discard_and_switch": "Änderungen verwerfen und wechseln",
+      "based_on_hint": "Basiert auf der Vorlage {{name}} — deine Änderungen gelten nur für diesen Agenten und werden sofort gespeichert.",
+      "edits_make_own_copy": "Änderungen hier geben diesem Agenten eine eigene Kopie der Vorlage — sofort gespeichert; das Original und andere Agenten bleiben unberührt, und du kannst jederzeit auf das Original zurücksetzen.",
+      "config_file_info": "Gespeichert als {{filename}} im gemeinsamen Agenten-Ordner.",
+      "used_by_count": "von {{count}} Agenten verwendet",
+      "used_by_this_agent_only": "nur von diesem Agenten verwendet",
+      "no_model_pinned": "Kein Modell festgelegt — Konto-Standard",
+      "model_hint": "In der Vorlage festgelegt. Wird sofort gespeichert; dieser Agent kann es unter Modell überschreiben.",
+      "auto_approved_hint": "Läuft ohne vorherige Rückfrage.",
+      "prompt_lives_in_a_file": "Diese Anweisungen liegen in einer Datei, nicht in der Vorlage selbst.",
+      "prompt_truncated": "Zeigt die ersten {{count}} Zeichen — öffne die Datei für den Rest.",
+      "show_more": "+ {{count}} weitere",
+      "show_fewer": "Weniger anzeigen",
+      "loading": "Vorlage wird geladen…",
+      "could_not_load": "Die Konfiguration dieser Vorlage konnte nicht geladen werden.",
+      "guardrails_hint": "Befehle, die niemals ausgeführt werden dürfen.",
+      "save_failed": "Diese Änderung wurde nicht gespeichert — bitte erneut versuchen."
+    },
     "pinSurfaceButton": {
       "pin_limit_reached": "Maximal {{n}} Anheftungen in der Seitenleiste - zuerst eine lösen"
     },
@@ -8188,6 +8225,12 @@
       "stream_error_max_duration": "Das Diktat hat seine Längenbegrenzung erreicht. Starte eine neue Aufnahme, um weiterzumachen.",
       "stream_error_model_missing": "Das Sprachmodell ist noch nicht bereit. Lade es in den Spracherkennungseinstellungen herunter und versuche es dann noch einmal.",
       "stream_error_session_failed": "Die Diktiersitzung ist fehlgeschlagen. Nimm es noch einmal auf."
+    },
+    "templateSource": {
+      "built_in": "Integriert",
+      "package": "Paket",
+      "custom": "Benutzerdefiniert",
+      "private_copy": "Private Kopie"
     }
   },
   "nav": {
@@ -9168,20 +9211,20 @@
         "inject_context": "Kontext einfügen",
         "knowledge_results_for_query": "Wissensergebnisse für „{{query}}“",
         "no_knowledge_found_for_query": "Kein Wissen gefunden für „{{query}}“",
-        "retry": "Erneut versuchen",
-        "search_failed_for_query": "Wissenssuche fehlgeschlagen für „{{query}}“",
         "searching_knowledge_for_query": "Wissen wird durchsucht nach „{{query}}“…",
         "selected": "ausgewählt ·",
-        "tokens": "Tokens"
+        "tokens": "Tokens",
+        "retry": "Erneut versuchen",
+        "search_failed_for_query": "Wissenssuche fehlgeschlagen für „{{query}}“"
       },
       "mcpInfoButton": {
         "agent_loads_only_its_own_mcp_servers": "Der Agent „{{name}}“ lädt nur seine eigenen MCP-Server.",
         "disabled": "deaktiviert",
-        "load_failed": "MCP-Server konnten nicht geladen werden",
         "mcp_servers_count": "MCP-Server ({{count}}/{{total}})",
-        "mode_load_failed": "Tool-Search-Modus konnte nicht gelesen werden; Standard wird angezeigt",
         "none_loaded": "Keine geladen",
-        "session_mcp_servers": "MCP-Server der Sitzung"
+        "session_mcp_servers": "MCP-Server der Sitzung",
+        "load_failed": "MCP-Server konnten nicht geladen werden",
+        "mode_load_failed": "Tool-Search-Modus konnte nicht gelesen werden; Standard wird angezeigt"
       },
       "mcpOAuthBanner": {
         "authenticated": "authentifiziert.",
@@ -9557,10 +9600,10 @@
         "close_search": "Suche schließen",
         "ctx_add_to_chat": "Zum Chat hinzufügen",
         "filter_placeholder": "Dateien filtern…",
-        "git_status_failed": "Git-Status konnte nicht gelesen werden",
         "refresh": "Aktualisieren",
         "resize": "Dateibrowser-Größe ändern",
-        "tree_mode": "Dateilisten-Modus"
+        "tree_mode": "Dateilisten-Modus",
+        "git_status_failed": "Git-Status konnte nicht gelesen werden"
       },
       "filesHome": {
         "no_project_dir": "Für diesen Chat ist kein Projektverzeichnis festgelegt",
@@ -10332,7 +10375,6 @@
     },
     "developerPage": {
       "developer": "Entwickler",
-      "feature_previews_moved": "Funktionsvorschauen sind jetzt unter Einstellungen > Entwickler",
       "tabs": {
         "agentBackend": {
           "description": "Welchen Agenten neue Sitzungen starten – Kiro CLI, Claude Code oder KAS",
@@ -10374,7 +10416,8 @@
           "description": "Startlatenz von Sitzungen (p50/p90) und Beschleunigungsmetriken für MCP/Skills",
           "label": "Telemetrie"
         }
-      }
+      },
+      "feature_previews_moved": "Funktionsvorschauen sind jetzt unter Einstellungen > Entwickler"
     },
     "discoverPage": {
       "subtitle": "Agentische Apps durchsuchen und installieren",
@@ -10554,11 +10597,11 @@
       "session_color_hint": "Von diesem Agenten gestartete Sitzungen verwenden diese Farbe, sofern die Sitzung keine eigene Farbe hat. Eine Änderung färbt diese Sitzungen neu ein. Leer lassen für keine Agentenfarbe.",
       "session_color_hex": "Hex-Wert der Sitzungsfarbe",
       "session_color_clear": "Entfernen",
+      "editor_options_load_failed": "Die Workspace-, Vorlagen- und Erinnerungsspeicher-Optionen des Crew-Editors konnten nicht geladen werden.",
       "discard_unsaved_changes": "Nicht gespeicherte Änderungen verwerfen?",
       "discard_unsaved_body": "Diese Crew hat Änderungen, die nie gespeichert wurden. Wenn Sie jetzt schließen, gehen sie verloren.",
       "discard_confirm": "Änderungen verwerfen",
-      "discard_also_crew_edits": "Die übrigen nicht gespeicherten Änderungen dieser Crew gehen damit ebenfalls verloren.",
-      "editor_options_load_failed": "Die Workspace-, Vorlagen- und Erinnerungsspeicher-Optionen des Crew-Editors konnten nicht geladen werden."
+      "discard_also_crew_edits": "Die übrigen nicht gespeicherten Änderungen dieser Crew gehen damit ebenfalls verloren."
     },
     "knowledge": {
       "detailView": {
@@ -11154,13 +11197,13 @@
         "session_timeout": "Sitzungs-Timeout",
         "subagent_settings": "Subagenten-Einstellungen",
         "takes_effect_on_next_session_range_60_86400s": "Wird in der nächsten Sitzung wirksam. Bereich: 60–86400 s.",
-        "tool_call_budget_per_subagent_1_1000_default_100": "Budget für Werkzeugaufrufe pro Subagent (1–1000). Standard: 100.",
         "used_by": "Verwendet von",
         "using_global_memory_settings": "Globale Erinnerungseinstellungen werden verwendet",
         "using_legacy_mode_agent_default_agent_as_agent_t": "Legacy-Modus wird verwendet — agent.default_agent als Agenten-Vorlage",
         "warm_pool": "Warm-Pool",
         "workspace": "Workspace",
-        "workspaces": "Workspaces"
+        "workspaces": "Workspaces",
+        "tool_call_budget_per_subagent_1_1000_default_100": "Budget für Werkzeugaufrufe pro Subagent (1–1000). Standard: 100."
       },
       "mcpTab": {
         "actions": "Aktionen",
@@ -12627,13 +12670,13 @@
       "developerPanel": {
         "developer_mode": "Entwicklermodus",
         "developer_tools": "Entwicklerwerkzeuge",
-        "feature_previews": "Funktionsvorschauen",
-        "feature_previews_desc": "Nicht veröffentlichte Funktionen und Seiten. Die Seiten erscheinen weder in der Seitenleiste noch in „Überall suchen“, bis du sie hier aktivierst; die Schalter selbst findet die Einstellungssuche aber. Gilt nur für dieses Gerät, und sie sind absichtlich unfertig.",
         "gateway": "Gateway",
         "open_developer_page": "Entwicklerseite öffnen",
         "run_a_local_gateway": "Lokales Gateway ausführen",
         "show_developer_page_in_sidebar_with_logs_system": "Entwicklerseite in der Seitenleiste mit Protokollen, Systemmetriken und Erinnerungsinterna anzeigen",
-        "start_a_gateway_on_this_machine_turn_it_off_to_u": "Startet ein Gateway auf diesem Rechner. Deaktivieren, um {{productName}} nur als Client zu verwenden: die Verbindung geht dann an das konfigurierte Gateway, anstatt hier eines zu starten. Wird beim nächsten Start der App wirksam."
+        "start_a_gateway_on_this_machine_turn_it_off_to_u": "Startet ein Gateway auf diesem Rechner. Deaktivieren, um {{productName}} nur als Client zu verwenden: die Verbindung geht dann an das konfigurierte Gateway, anstatt hier eines zu starten. Wird beim nächsten Start der App wirksam.",
+        "feature_previews": "Funktionsvorschauen",
+        "feature_previews_desc": "Nicht veröffentlichte Funktionen und Seiten. Die Seiten erscheinen weder in der Seitenleiste noch in „Überall suchen“, bis du sie hier aktivierst; die Schalter selbst findet die Einstellungssuche aber. Gilt nur für dieses Gerät, und sie sind absichtlich unfertig."
       },
       "discordPanel": {
         "allowed_server_channel_ids": "Erlaubte Server-Kanal-IDs",

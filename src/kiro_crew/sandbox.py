@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from kiro_crew import platform_compat
-from kiro_crew.config.paths import config_dir
+from kiro_crew.config.paths import config_dir, kiro_agents_dir
 from kiro_crew.constants import KIROCREW_SPAWNED_ENV, KIROCREW_SPAWNED_VALUE
 from kiro_crew.identity_stores import AUTH_SQLITE_DB, AUTH_SQLITE_SIDECAR_SUFFIXES
 from kiro_crew.pinned_fs import fd_real_path
@@ -316,6 +316,31 @@ _CREW_READONLY_LEAVES: tuple[str, ...] = (
     # fence how a command SPELLS this path, and the kernel denial is what still
     # holds when a spelling is built at runtime (``$(printf ...)``).
     "settings_seeds.json",
+    # The fork-lineage / model-state sidecar (agent_state.py). Same
+    # input-to-an-authorization-decision class as the ceilings above:
+    # ``forked_from`` / ``private_to`` decide whether the fork endpoint treats
+    # a template as one crew's private copy, so a forged entry makes the
+    # owner's next PATCH mutate a SHARED template. The tool gate and the bash
+    # text matcher fence the spelled paths, but a spawned interpreter's
+    # ``open()`` or a split-string shell path reaches the file by constructed
+    # runtime paths no text gate can see — only an OS disposition closes that.
+    # Read-only, not hidden: in-sandbox readers (a script cron's fork-info
+    # reads) must keep working, and every legitimate WRITER (the dashboard
+    # fork/publish/reset handlers, the CLI) runs in the unsandboxed gateway or
+    # user process. Absent-file coverage differs per backend: the seatbelt
+    # denies by literal path (creation IS a write), while the Linux mount seal
+    # needs a file to bind — so this leaf is ALSO in
+    # ``_CREW_PRECREATE_READONLY_FILE_LEAVES`` and gets materialised as ``{}``
+    # before every namespace spawn.
+    "agent_model_state.json",
+    # The sidecar's cross-process advisory lock. Unsealed, a sandboxed process
+    # can unlink and recreate it, so concurrent writers lock DIFFERENT inodes
+    # and the loser's stale read-modify-write erases lineage the winner just
+    # recorded — the lock file's identity is what makes the lock a lock. No
+    # sandboxed process legitimately takes it: every locker (agent_state's
+    # mutators via the dashboard/CLI) runs unsandboxed. Absent-file coverage
+    # mirrors the sidecar's own entry via the pre-create list.
+    "agent_model_state.json.lock",
 )
 
 #: Crew-home leaves that MUST stay read-write for a sandboxed process. Every entry is
@@ -352,6 +377,15 @@ def _crew_home_entries(leaves: tuple[str, ...]) -> list[str]:
 _CREW_HIDDEN_DIRS: list[str] = _crew_home_entries(_CREW_HIDDEN_LEAVES)
 #: Exposed read-only in every mode.
 _CREW_READONLY_TARGETS: list[str] = _crew_home_entries(_CREW_READONLY_LEAVES)
+# The template-spec advisory lock (agent.agents_spec_lock) lives in the KIRO
+# AGENTS tree, not the crew home, so it cannot ride the crew leaf lists.
+# Sealed for the same reason as the model-state lock above: an unsealed lock
+# can be unlinked and recreated inside the sandbox, so concurrent template
+# writers lock DIFFERENT inodes and one edit silently overwrites the other.
+# Every legitimate locker (the fork/publish/reset handlers, the fork refresh)
+# runs unsandboxed. Home-relative like the crew entries; both consumption
+# sites join against $HOME. Absent-file coverage: _sealable_absent_ceilings.
+_CREW_READONLY_TARGETS.append(".kiro/agents/.kirocrew-agents.lock")
 
 #: Hidden crew-home leaves one app's OWN backend must read and write.
 #:
@@ -584,6 +618,24 @@ _CREW_PRECREATE_READONLY_FILE_LEAVES: tuple[str, ...] = (
     # (criterion 2).
     "file_delivery_consent.json",
     "settings_seeds.json",
+    # The fork-lineage sidecar satisfies both criteria the way
+    # ``file_delivery_consent.json`` does: ``agent_state._read`` returns ``{}``
+    # for absent, unreadable, AND an empty document alike, so a pre-created
+    # ``{}`` means exactly "no lineage recorded" (criterion 1); the writer
+    # publishes through ``atomic_write`` (new inode), so a sandboxed reader
+    # frozen at ``{}`` under-reports fork status — which grants nothing, since
+    # the write seal is what withholds forgery and it applies regardless
+    # (criterion 2). Without this entry the Linux mount seal skips the absent
+    # sidecar — the DEFAULT state before any fork — leaving it creatable from
+    # inside the namespace sandbox.
+    "agent_model_state.json",
+    # The sidecar's advisory lock, same absent-file reasoning: the lock is
+    # created on first use, so without pre-creation a sandbox spawned before
+    # any lineage write finds it absent and creatable — and a sandbox-created
+    # lock is exactly the replaced-inode attack the read-only seal exists to
+    # stop. An empty lock file is absent-equivalent by definition: its content
+    # is never read, only its identity is locked.
+    "agent_model_state.json.lock",
 )
 
 #: The one masked leaf that carries its own argument (see the sibling-gap note
@@ -624,9 +676,20 @@ def _sealable_absent_ceilings() -> tuple[list[str], list[str]]:
     except Exception:  # pragma: no cover - defensive; a spawn must not fail on this
         logger.debug("could not resolve the crew data home for ceiling sealing", exc_info=True)
         return ([], [])
+    file_targets = [os.path.join(root, leaf) for leaf in _CREW_PRECREATE_READONLY_FILE_LEAVES]
+    try:
+        # The template-spec lock lives in the KIRO AGENTS tree (see the
+        # readonly-target entry above): created on first use, so without
+        # pre-creation a sandbox spawned before any template write finds it
+        # absent and creatable — a sandbox-created lock is the replaced-inode
+        # attack the seal exists to stop. Empty is absent-equivalent: its
+        # content is never read, only its identity is locked.
+        file_targets.append(str(kiro_agents_dir() / ".kirocrew-agents.lock"))
+    except Exception:  # pragma: no cover - defensive, same posture as above
+        logger.debug("could not resolve the kiro agents dir for lock sealing", exc_info=True)
     return (
         [os.path.join(root, leaf) for leaf in _CREW_PRECREATE_READONLY_DIR_LEAVES],
-        [os.path.join(root, leaf) for leaf in _CREW_PRECREATE_READONLY_FILE_LEAVES],
+        file_targets,
     )
 
 
