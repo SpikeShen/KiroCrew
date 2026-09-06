@@ -2724,8 +2724,9 @@ def _roster_avatar(value: object) -> dict:
 
     **A shape allowlist, with masking confined to the leaves that can carry user
     text.** ``_safe_avatar`` is the config's own validator, so only
-    ``{"kind": "ghost", "traits": {...}}`` and ``{"kind": "image", "v": ...,
-    "file": "<digest>.<ext>"}`` survive and junk collapses to ``{}``. Within that,
+    ``{"kind": "ghost", "traits": {...}}``, ``{"kind": "image", "v": ...,
+    "file": "<digest>.<ext>"}`` and ``{"kind": "pack", "id": "<pack id>"}`` survive
+    and junk collapses to ``{}``. Within that,
     ONLY ``traits`` values are masked:
 
     - ``kind`` and ``v`` are structural. Mask ``kind`` and the dashboard can no
@@ -2742,6 +2743,11 @@ def _roster_avatar(value: object) -> dict:
       degrades that axis rather than breaking the face.
     - ``sounds`` values are constrained by ``_safe_sounds`` to a shipped preset
       name, so they are pinned rather than masked -- the same reason ``file`` is.
+    - ``id`` (on ``kind: "pack"``) is pinned by
+      ``appearance_packs.safe_pack_id`` to letters, digits, dash and underscore,
+      so it is not arbitrary text either — and masking it would make the pack
+      routes resolve nothing, silently blanking the face for the same reason a
+      masked ``file`` breaks the image.
 
     Honest limit on how far the two rules can be told apart: because
     ``_safe_avatar`` already pins every non-``traits`` leaf to a shape the redactors
@@ -3447,7 +3453,7 @@ async def api_kirocrew_agents_create(request: web.Request) -> web.Response:
     if _raw_avatar not in (None, {}) and not avatar and not _is_ghost_shaped(_raw_avatar):
         return web.json_response(
             {
-                "error": "avatar must be {'kind': 'ghost', 'traits': {...}}, {'kind': 'image'}, or empty",
+                "error": "avatar must be {'kind': 'ghost', 'traits': {...}}, {'kind': 'image'}, {'kind': 'pack', 'id': ...}, or empty",
                 "code": "invalid_avatar",
             },
             status=400,
@@ -3623,7 +3629,7 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
             if _raw_av not in (None, {}) and not _av and not _is_ghost_shaped(_raw_av):
                 return web.json_response(
                     {
-                        "error": "avatar must be {'kind': 'ghost', 'traits': {...}}, {'kind': 'image'}, or empty",
+                        "error": "avatar must be {'kind': 'ghost', 'traits': {...}}, {'kind': 'image'}, {'kind': 'pack', 'id': ...}, or empty",
                         "code": "invalid_avatar",
                     },
                     status=400,

@@ -73,9 +73,7 @@ src/kiro_crew/apps/builtins/code_review_sage/tests/test_run_endpoints.py
 src/kiro_crew/apps/builtins/code_review_sage/tests/test_run_scoping.py
 src/kiro_crew/apps/builtins/code_review_sage/tests/test_store_selfheal.py
 src/kiro_crew/apps/builtins/code_review_sage/tests/test_user_repos.py
-src/kiro_crew/apps/builtins/crew_companion/appearances.py
 src/kiro_crew/apps/builtins/crew_companion/backend/routes.py
-src/kiro_crew/apps/builtins/crew_companion/pack_transfer.py
 src/kiro_crew/apps/builtins/crew_companion/reminders.py
 src/kiro_crew/apps/builtins/crew_companion/store.py
 src/kiro_crew/apps/builtins/crew_companion/tests/test_appearances.py

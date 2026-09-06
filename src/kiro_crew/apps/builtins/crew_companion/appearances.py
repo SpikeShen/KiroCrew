@@ -21,6 +21,8 @@ Three properties this has to keep, all learned from the desktop version:
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import os
@@ -29,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from kiro_crew.appearance_packs import PACK_SOUND_STATES, safe_pack_id
 from kiro_crew.platform_compat import chmod_safe, is_link_or_junction
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,63 @@ MAX_FILE_BYTES = 8 * 1024 * 1024
 
 #: Animation formats the renderer knows how to draw.
 FORMATS = ("svg", "lottie", "sprite")
+
+#: Agent lifecycle states a pack may carry a sound cue for.
+SOUND_STATES = PACK_SOUND_STATES
+
+#: Ceiling for ONE decoded sound. Room for a short cue at ordinary bitrates and
+#: far below anything that would stall a page or exhaust memory on read. The
+#: bundle importer applies the same cap, so an oversized cue is refused where
+#: the user can see it rather than silently dropped later.
+MAX_SOUND_BYTES = 512 * 1024
+
+#: Audio containers a pack may name, and the type each is served as. The value
+#: is chosen by SNIFFING the decoded bytes, never by trusting the filename: the
+#: manifest is hand-editable, and a name is not evidence of what a file is.
+SOUND_MIME = {".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".wav": "audio/wav"}
+
+#: The suffixes above, as a tuple for ``str.endswith``.
+SOUND_SUFFIXES = tuple(SOUND_MIME)
+
+
+def sniff_audio(raw: bytes) -> str:
+    """The container ``raw`` actually is, as a ``SOUND_MIME`` key, or ``""``.
+
+    Magic bytes only, and only for the three containers every target browser
+    plays in an ``<audio>`` element. An unrecognised header is refused rather
+    than served as a guess, because the browser would decide what to do with
+    unknown bytes and this is content a third party authored.
+    """
+    if raw.startswith(b"ID3"):
+        return ".mp3"
+    # A bare MPEG frame with no ID3 tag: 11 sync bits.
+    if len(raw) >= 2 and raw[0] == 0xFF and (raw[1] & 0xE0) == 0xE0:
+        return ".mp3"
+    if raw.startswith(b"OggS"):
+        return ".ogg"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WAVE":
+        return ".wav"
+    return ""
+
+
+def decode_sound(text: Any) -> bytes | None:
+    """Decode a stored sound's base64 into audio bytes, or ``None`` on junk.
+
+    A pack's files are stored as TEXT (the store's write path is text-only), so
+    audio lives base64-encoded exactly as a sprite sheet does. Whitespace is
+    stripped first because an exported bundle may have been reflowed by hand;
+    ``validate=True`` then refuses anything that is not really base64 instead
+    of silently decoding a prefix.
+    """
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        raw = base64.b64decode("".join(text.split()), validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if not raw or len(raw) > MAX_SOUND_BYTES:
+        return None
+    return raw
 
 
 @dataclass(frozen=True)
@@ -77,21 +137,15 @@ def _safe_id(raw: Any) -> str | None:
     """Validate a pack id as a single safe path segment.
 
     A pack id becomes a directory name, so this is the boundary that stops
-    ``../`` or an absolute path from escaping the packs directory. Rejecting is
-    correct here rather than sanitising: a caller sending a traversal is not making
-    a typo, and silently rewriting it would hide that.
+    ``../`` or an absolute path from escaping the packs directory.
+
+    The rule itself lives in :mod:`kiro_crew.appearance_packs` because the
+    config loader needs it too: ``agents.*.avatar`` may name a pack, and a value
+    it stores must be one this store can look up. Keeping one copy is what makes
+    that true — importing this module from ``config/sections.py`` would invert
+    the dependency and pull the app's tree into every config load.
     """
-    if not isinstance(raw, str):
-        return None
-    ident = raw.strip()
-    if not ident or len(ident) > 64:
-        return None
-    if ident in (".", ".."):
-        return None
-    # Letters, digits, dash and underscore only — no separators, no dots.
-    if not all(c.isalnum() or c in "-_" for c in ident):
-        return None
-    return ident
+    return safe_pack_id(raw)
 
 
 class AppearanceStore:
@@ -116,9 +170,7 @@ class AppearanceStore:
             if self._colour_path.exists():
                 raw = json.loads(self._colour_path.read_text("utf-8"))
                 if isinstance(raw, dict):
-                    self._colour_maps = {
-                        k: v for k, v in raw.items() if isinstance(v, dict)
-                    }
+                    self._colour_maps = {k: v for k, v in raw.items() if isinstance(v, dict)}
         except (OSError, ValueError) as exc:
             # A corrupt colour file costs the user their recolouring, not their art,
             # so carrying on with defaults beats refusing to start.
@@ -199,6 +251,7 @@ class AppearanceStore:
                 # renderer already has it and needs no content here.
                 "animations": {},
                 "colorMap": self.colour_map(DEFAULT_PACK),
+                "sounds": {},
             }
 
         pack_dir = self._root / ident
@@ -277,6 +330,7 @@ class AppearanceStore:
             "categories": categories,
             "sprite": sprite,
             "colorMap": self.colour_map(ident),
+            "sounds": self.pack_sounds(ident),
         }
         # The ORIGINAL sheet, when the pack kept one for re-editing. It is not
         # an animation slot, so it never appears in `animations` — and reading
@@ -326,9 +380,7 @@ class AppearanceStore:
         # Only string→string pairs; anything else would break the SVG rewrite that
         # consumes this on the renderer side.
         clean = {
-            str(k): str(v)
-            for k, v in colours.items()
-            if isinstance(k, str) and isinstance(v, str)
+            str(k): str(v) for k, v in colours.items() if isinstance(k, str) and isinstance(v, str)
         }
         prev = self._colour_maps.get(ident)
         self._colour_maps[ident] = clean
@@ -442,9 +494,7 @@ class AppearanceStore:
                     # write silently replaced the first while the import
                     # reported success. Same all-or-nothing rule as above: a
                     # save that would lose one file's art refuses entirely.
-                    logger.warning(
-                        "crew-companion: case-colliding pack filename: %r", name
-                    )
+                    logger.warning("crew-companion: case-colliding pack filename: %r", name)
                     shutil.rmtree(staging, ignore_errors=True)
                     return False
                 seen_casefolded.add(safe.casefold())
@@ -478,7 +528,7 @@ class AppearanceStore:
             try:
                 os.replace(staging, target)
             except OSError:
-                if backup is not None:      # put the original back, then report
+                if backup is not None:  # put the original back, then report
                     os.replace(backup, target)
                 raise
             if backup is not None:
@@ -492,6 +542,91 @@ class AppearanceStore:
             except OSError:
                 pass
             return False
+
+    # ── sounds ──────────────────────────────────────────────────────────────
+
+    def _pack_sound_entries(self, pack_id: str) -> dict[str, tuple[str, str, bytes, str]]:
+        """Every USABLE sound in a pack: state -> (filename, base64, bytes, mime).
+
+        One reader behind all three public shapes, so presence can never
+        disagree with what the byte route serves. Every rejection is a warning
+        and a skip, never an exception: a pack is third-party content, and one
+        hand-edited sound entry must not cost the pack its art.
+        """
+        ident = _safe_id(pack_id)
+        if ident is None or ident == DEFAULT_PACK:
+            # The built-in ships inside the frontend and has no pack directory,
+            # so it has nowhere to keep a sound file.
+            return {}
+        pack_dir = self._root / ident
+        manifest = self._read_manifest(pack_dir)
+        if manifest is None:
+            return {}
+        section = manifest.get("sounds")
+        if not isinstance(section, dict):
+            return {}
+        out: dict[str, tuple[str, str, bytes, str]] = {}
+        for state in SOUND_STATES:
+            filename = section.get(state)
+            if filename is None:
+                continue
+            safe = _safe_filename(filename)
+            if safe is None or not safe.lower().endswith(SOUND_SUFFIXES):
+                logger.warning(
+                    "crew-companion: dropping unusable %s sound in pack %s", state, ident
+                )
+                continue
+            # Through the ordinary pack-file read, so a sound gets the same
+            # link refusal, containment re-check and size ceiling every other
+            # pack file gets.
+            text = self._read_pack_file(pack_dir, safe)
+            raw = decode_sound(text)
+            if raw is None:
+                logger.warning(
+                    "crew-companion: %s sound in pack %s is unreadable or too large",
+                    state,
+                    ident,
+                )
+                continue
+            sniffed = sniff_audio(raw)
+            if not sniffed:
+                logger.warning("crew-companion: %s sound in pack %s is not audio", state, ident)
+                continue
+            out[state] = (safe, text or "", raw, SOUND_MIME[sniffed])
+        return out
+
+    def pack_sounds(self, pack_id: str) -> dict[str, bool]:
+        """Which states this pack has a usable sound for.
+
+        Presence only. The client needs to know what exists in order to decide
+        whether to play anything at all, and shipping the audio inline would put
+        hundreds of KB into a payload the roster fetches to draw a face.
+        """
+        return {state: True for state in self._pack_sound_entries(pack_id)}
+
+    def pack_sound(self, pack_id: str, state: Any) -> tuple[bytes, str] | None:
+        """One state's audio as raw bytes plus the type to serve it as."""
+        if not isinstance(state, str):
+            return None
+        entry = self._pack_sound_entries(pack_id).get(state)
+        if entry is None:
+            return None
+        return entry[2], entry[3]
+
+    def pack_sound_payload(self, pack_id: str) -> tuple[dict[str, str], dict[str, str]]:
+        """A pack's sounds in BUNDLE shape: (state -> filename, filename -> base64).
+
+        Export needs the manifest section and the file contents behind it, which
+        the presence map cannot supply. Without this an export/delete/import
+        round trip would destroy the cues — the same data-loss class the
+        category and sprite-sheet omissions in this file each produced in turn.
+        """
+        states: dict[str, str] = {}
+        files: dict[str, str] = {}
+        for state, (filename, text, _raw, _mime) in self._pack_sound_entries(pack_id).items():
+            states[state] = filename
+            files[filename] = text
+        return states, files
 
     # ── internals ───────────────────────────────────────────────────────────
 
@@ -513,9 +648,7 @@ class AppearanceStore:
             # manifest.json would read ANY JSON file on disk and surface its
             # fields (names, paths) through the gallery listing.
             if is_link_or_junction(path):
-                logger.warning(
-                    "crew-companion: refusing linked manifest in %s", pack_dir.name
-                )
+                logger.warning("crew-companion: refusing linked manifest in %s", pack_dir.name)
                 return None
             if not path.is_file() or path.stat().st_size > MAX_FILE_BYTES:
                 return None

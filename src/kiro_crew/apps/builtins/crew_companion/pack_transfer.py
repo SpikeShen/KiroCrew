@@ -27,11 +27,16 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from kiro_crew.appearance_packs import PACK_SOUND_STATES
 from kiro_crew.apps.builtins.crew_companion.appearances import (
     DEFAULT_PACK,
     MAX_FILE_BYTES,
+    MAX_SOUND_BYTES,
+    SOUND_SUFFIXES,
     _safe_filename,
     _safe_id,
+    decode_sound,
+    sniff_audio,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,9 +54,13 @@ MAX_DOWNLOAD_BYTES = 12 * 1024 * 1024
 #: How long any single PetDex request may take.
 FETCH_TIMEOUT_SECS = 20
 
-#: Files a bundle may contain. A pack is art plus a manifest; nothing here needs to
-#: accept arbitrary extensions, so the allowlist is the check.
-ALLOWED_SUFFIXES = (".json", ".svg", ".png", ".webp", ".gif")
+#: Art files a bundle may contain. A pack is art plus a manifest; nothing here
+#: needs to accept arbitrary extensions, so the allowlist is the check.
+ART_SUFFIXES = (".json", ".svg", ".png", ".webp", ".gif")
+
+#: Everything a bundle may contain. Sound cues are art too, under their own
+#: ceiling — see ``MAX_SOUND_BYTES``.
+ALLOWED_SUFFIXES = ART_SUFFIXES + SOUND_SUFFIXES
 
 # ── PetDex ──────────────────────────────────────────────────────────────────
 
@@ -140,7 +149,8 @@ def _get(url: str, *, as_json: bool) -> Any:
     Read in chunks and abort past the cap rather than trusting Content-Length.
     """
     request = urllib.request.Request(  # noqa: S310 — scheme and host pinned above
-        url, headers={"User-Agent": "KiroCrew-CrewCompanion"}  # brand-ok: wire identifier, not prose
+        url,
+        headers={"User-Agent": "KiroCrew-CrewCompanion"},  # brand-ok: wire identifier, not prose
     )
     # Through _OPENER, never the module-level urlopen: the default opener follows
     # redirects without re-validating them.
@@ -309,6 +319,14 @@ def export_bundle(appearances: Any, pack_id: str) -> dict[str, Any] | None:
     ):
         files[source_name] = source_image
 
+    # Sound cues, read straight off the store rather than out of `detail`: the
+    # detail payload deliberately reports presence only (audio is fetched per
+    # state, not inlined into the payload the roster draws a face from), so a
+    # bundle built from it alone would silently drop every cue and an
+    # export/delete/import round trip would destroy them.
+    sound_states, sound_files = appearances.pack_sound_payload(pack_id)
+    files.update(sound_files)
+
     return {
         "kind": "crew-companion-pack",
         "version": 1,
@@ -319,6 +337,7 @@ def export_bundle(appearances: Any, pack_id: str) -> dict[str, Any] | None:
             "moods": manifest_maps["moods"],
             "random": manifest_maps["random"],
             "sprite": detail.get("sprite") or {},
+            "sounds": sound_states,
         },
         "files": files,
     }
@@ -359,10 +378,61 @@ def import_bundle(appearances: Any, payload: Any) -> dict[str, Any]:
             return {"ok": False, "error": f"Unsupported file in bundle: {safe}"}
         if len(content.encode("utf-8")) > MAX_FILE_BYTES:
             return {"ok": False, "error": f"File too large in bundle: {safe}"}
+        if safe.lower().endswith(SOUND_SUFFIXES):
+            # A sound is refused HERE rather than dropped on read: the store's
+            # reader skips an unusable cue with a warning nobody sees, so a
+            # cue the reader will not serve would import "successfully" and
+            # then simply never play.
+            #
+            # BOTH checks, not just the decode. `decode_sound` answers base64
+            # and the size ceiling; the reader ALSO sniffs, so valid base64 of
+            # something that is not audio (a PNG, a text file) passed this gate
+            # and was then dropped at read — the exact silent outcome above,
+            # one step later. The gate has to be the same predicate the reader
+            # applies, or it is not a gate.
+            raw = decode_sound(content)
+            if raw is None:
+                return {
+                    "ok": False,
+                    "error": f"Sound unreadable or over {MAX_SOUND_BYTES // 1024} KB: {safe}",
+                }
+            if not sniff_audio(raw):
+                return {"ok": False, "error": f"That file is not audio: {safe}"}
         clean[safe] = content
 
-    if not clean:
+    # `clean` being non-empty is no longer the same question as "this bundle has
+    # art in it": the allowlist grew to accept sound cues, so a sound-only bundle
+    # satisfied the old check and installed a pack with nothing to draw. A pack IS
+    # its art — the cues are an optional extra on top — so the art file is what
+    # the check has to name.
+    if not any(name.lower().endswith(ART_SUFFIXES) for name in clean):
         return {"ok": False, "error": "That bundle has no art in it"}
+
+    # Every cue the manifest NAMES must be a file that arrived. A reference with
+    # no file behind it is dropped silently by the reader, so the import would
+    # report success and the cue would never play — the same silent outcome the
+    # per-file audio check above exists to prevent, reached from the other side.
+    sounds_section = manifest.get("sounds")
+    if isinstance(sounds_section, dict):
+        for state, filename in sounds_section.items():
+            if state not in PACK_SOUND_STATES:
+                # Not addressable by any renderer state, so it names nothing the
+                # reader will look for either. Dropped, not fatal.
+                continue
+            safe_sound = _safe_filename(filename)
+            # Presence is not enough: the reader also requires an AUDIO suffix,
+            # so a cue pointing at a real art file (`"done": "idle.svg"`)
+            # imported "successfully" and then never played. Same predicate as
+            # the reader, or the gate is not a gate.
+            if (
+                safe_sound is None
+                or safe_sound not in clean
+                or not safe_sound.lower().endswith(SOUND_SUFFIXES)
+            ):
+                return {
+                    "ok": False,
+                    "error": f"That bundle names a {state} sound it does not contain",
+                }
 
     # Refuse rather than clobber: the user may not realise the id collides.
     # `pack_exists`, not the listing: list_packs skips a pack whose manifest is
@@ -406,7 +476,7 @@ def save_sprite_pack(
     if ident is None:
         return {"ok": False, "error": "Invalid pack id"}
     safe_name = _safe_filename(filename)
-    if safe_name is None or not safe_name.lower().endswith(ALLOWED_SUFFIXES):
+    if safe_name is None or not safe_name.lower().endswith(ART_SUFFIXES):
         return {"ok": False, "error": "Unsupported sprite filename"}
     if not isinstance(sprite_base64, str) or not sprite_base64:
         return {"ok": False, "error": "Missing sprite art"}
