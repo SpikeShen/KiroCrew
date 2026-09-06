@@ -281,6 +281,18 @@ async def api_chat_slot_rewind(request: web.Request) -> web.Response:
         # refuses a valid cursor (``since < base``) or repeats rows. The save has
         # no contract on this one, so it travels only to the commit.
         pre_await_disk_older_durable_count = slot._disk_older_durable_count
+        # Row identities on the LIVE slot at the boundary. A workflow or cron
+        # completion appends WITHOUT taking ``slot._lock`` (``workflow_inject``
+        # calls ``append_and_surface`` straight on the event loop), so a
+        # wholesale replace at the commit drops the injected row -- and the
+        # rewrite cannot put it back, because a rewrite deliberately skips the
+        # cross-process-append scan (``collect_foreign=not rewrite`` in
+        # ``chat_persistence``). Keeping it in the window is what makes the next
+        # ORDINARY flush re-persist it. Identity rather than a length: an
+        # ``append`` at the window cap trims the front, so a positional slice
+        # would either re-adopt trimmed rows or miss the arrived one.
+        pre_await_row_ids = {id(row) for row in slot.messages}
+        pre_await_pending_ids = {id(row) for row in slot._pending}
         retired_question_ids = [
             question_id
             for question_id in slot._question_pending
@@ -331,6 +343,27 @@ async def api_chat_slot_rewind(request: web.Request) -> web.Response:
                 logger.error("rewind _run_chat failed for %s", slot.key, exc_info=t.exception())
 
         task.add_done_callback(_on_done)
+
+        def _sel_native_destroyed(reason: str) -> None:
+            """Record a destroyed native context that never reached a commit.
+
+            ``discard_conversation`` plus ``aflush`` are irreversible: past that
+            point the provider-side conversation is gone whether or not this
+            request goes on to succeed. SEL already carries this endpoint's
+            denials and its successful commits, so without this record the ONE
+            outcome that destroyed context WITHOUT committing anything is the
+            only one missing from the audit trail -- and it is the only one that
+            cannot be reconstructed from the others, because in the trail it is
+            indistinguishable from a denial that touched nothing.
+            """
+            sel().log_api_access(
+                caller=request_app or "dashboard",
+                operation="chat.rewind",
+                outcome="error",
+                source="dashboard",
+                resources=f"slot={slot.key},native_cleared=1",
+                error=reason,
+            )
 
         # Durably clear the native resume sid before committing the edited
         # history. A failure leaves the original branch intact and dispatches
@@ -385,6 +418,9 @@ async def api_chat_slot_rewind(request: web.Request) -> web.Response:
                         session_key,
                         exc_info=True,
                     )
+                    # The in-memory discard already happened, so the native
+                    # context is gone even though its sid clear is not durable.
+                    _sel_native_destroyed("sid_flush_failed")
                     state.push_slots_update()
                     return web.json_response(
                         {
@@ -394,6 +430,54 @@ async def api_chat_slot_rewind(request: web.Request) -> web.Response:
                         status=503,
                     )
 
+            def _commit_target_intact() -> bool:
+                """Whether the slot is still the one this rewind was authorized against.
+
+                Three axes can move across the boundary awaits, and each makes a
+                commit land somewhere it was never authorized to. ONE predicate,
+                so the success path and the cancellation path cannot check
+                different subsets: a rewrite that landed is committed by
+                whichever path observes it, which makes an axis checked on only
+                one of them an axis not checked at all.
+                """
+                if slot_history_key(slot) != expected_history_key:
+                    # A cron or workflow injection re-linked the slot, hydrating
+                    # it with ANOTHER conversation's state. The prospective copy
+                    # froze the old routing, so the save-side
+                    # ``expected_history_key`` guard cannot see the LIVE slot
+                    # move -- this loop-side check is the one that can.
+                    logger.warning(
+                        "rewind: slot %s was rebound to another transcript during "
+                        "persistence; refusing the commit",
+                        slot.key,
+                    )
+                    return False
+                if state._slots.get(name) is not slot:
+                    # A close-and-recreate under the same name is a DIFFERENT
+                    # conversation that keeps the same history key, so the check
+                    # above waves it through. Require the same OBJECT.
+                    logger.warning(
+                        "rewind: slot %s was replaced during persistence; " "refusing the commit",
+                        slot.key,
+                    )
+                    return False
+                if slot.task is not task:
+                    # The reservation was displaced (``close_slot`` cancels
+                    # ``slot.task`` but not this handler, or another dispatcher
+                    # took the slot). Committing would leave this handler's turn
+                    # running ALONGSIDE whatever now owns ``slot.task`` -- two
+                    # concurrent turns writing one window -- while the reserved
+                    # dispatch this commit releases has already been cancelled,
+                    # so the endpoint would report success for a turn that never
+                    # runs.
+                    logger.warning(
+                        "rewind: the dispatch reservation for %s was displaced during "
+                        "persistence; refusing the commit",
+                        slot.key,
+                    )
+                    return False
+                return True
+
             def _commit_live_state() -> None:
                 """Adopt the prepared state on the live slot (synchronous).
 
@@ -402,14 +486,40 @@ async def api_chat_slot_rewind(request: web.Request) -> web.Response:
                 is the only thing that keeps live state matching it. No await
                 inside, so it is atomic on the event loop.
                 """
-                slot.messages = prospective_slot.messages
+                # Carry the rows that landed on the LIVE slot while the
+                # boundaries were pending -- see ``pre_await_row_ids``. Appending
+                # them AFTER the prospective window is the correct order and not
+                # merely a convenient one: ``monotonic_transcript_ts`` only ever
+                # moves a row forward, so an arrived row can never be stamped
+                # EARLIER than the edited one. It can be stamped IDENTICALLY --
+                # on a coarse clock (Windows ticks in ~15.6 ms steps) both
+                # appends read the same instant -- and list order is what
+                # separates that tie, which is why the merge order matters rather
+                # than a re-sort.
+                arrived_rows = [row for row in slot.messages if id(row) not in pre_await_row_ids]
+                arrived_pending = [
+                    row for row in slot._pending if id(row) not in pre_await_pending_ids
+                ]
+                # The question set is deliberately NOT reconciled against the
+                # live slot here, and the reason is a measurement rather than a
+                # preference: the edit's own ``append`` above is a ``user`` row,
+                # which is in ``_QUESTION_RETIRING_ROLES``, so the prospective
+                # copy has already retired exactly the non-blocking cards an
+                # arriving ``user``/``nudge`` row retires on the live slot. The
+                # two sides agree by construction, and reverting this field to
+                # the frozen copy reddens nothing. The one case that WOULD
+                # diverge -- a BLOCKING card answered during the boundary, which
+                # only ``request_question``'s round-trip retires -- is a
+                # pre-existing gap this change neither creates nor widens, and it
+                # is filed separately rather than folded in here.
+                slot.messages = prospective_slot.messages + arrived_rows
                 # Remove only the entries captured in the pre-await snapshot:
                 # an entry queued while the boundaries were pending belongs to
                 # the NEW timeline and must survive for the teardown drain.
                 slot._queue[:] = [
                     entry for entry in slot._queue if entry["id"] not in discarded_queue_ids
                 ]
-                slot._pending = prospective_slot._pending
+                slot._pending = prospective_slot._pending + arrived_pending
                 slot._question_pending = prospective_slot._question_pending
                 slot.invalidate_source_links()
                 slot._dirty = True
@@ -509,7 +619,7 @@ async def api_chat_slot_rewind(request: web.Request) -> web.Response:
                     landed = bool(await save_task)
                 except Exception:
                     landed = False
-                if landed and slot_history_key(slot) == expected_history_key:
+                if landed and _commit_target_intact():
                     _commit_live_state()
                     dispatch_commit = True
                     logger.info(
@@ -517,9 +627,19 @@ async def api_chat_slot_rewind(request: web.Request) -> web.Response:
                         "committed live state and dispatching the edited prompt",
                         slot.key,
                     )
+                else:
+                    # The native context is already gone and nothing was
+                    # committed against it: either the rewrite did not land, or
+                    # it landed on a slot that moved. This is the same
+                    # destroyed-without-a-commit outcome as the 503 paths below,
+                    # and it is the one exit where the client is not even told --
+                    # the cancellation propagates instead of a response, so the
+                    # SEL record is the ONLY place it can be attributed from.
+                    _sel_native_destroyed("request_cancelled")
                 raise
             except Exception:
                 logger.warning("rewind: failed to persist truncated history", exc_info=True)
+                _sel_native_destroyed("history_save_exception")
                 state.push_slots_update()
                 return web.json_response(
                     {
@@ -538,6 +658,7 @@ async def api_chat_slot_rewind(request: web.Request) -> web.Response:
                     "rewind: history save refused for %s (concurrent delete or rebind)",
                     slot.key,
                 )
+                _sel_native_destroyed("history_save_refused")
                 state.push_slots_update()
                 return web.json_response(
                     {
@@ -548,20 +669,12 @@ async def api_chat_slot_rewind(request: web.Request) -> web.Response:
                 )
 
             # Both irreversible boundaries succeeded. Before adopting the
-            # prepared state, confirm the slot still routes to the transcript
-            # this rewind was authorized against: a concurrent rebinding (a
-            # cron injection re-linking the slot mid-persistence) hydrates the
-            # slot with ANOTHER conversation's state, and a late commit here
-            # would silently replace it. The prospective copy froze the old
-            # routing, so the save-side ``expected_history_key`` guard cannot
-            # see the live slot move -- this loop-side check is the one that
-            # can. No await between this check and the mutations below.
-            if slot_history_key(slot) != expected_history_key:
-                logger.warning(
-                    "rewind: slot %s was rebound to another transcript during "
-                    "persistence; refusing the commit",
-                    slot.key,
-                )
+            # prepared state, confirm the slot is still the one this rewind was
+            # authorized against, on all three axes that can move across the
+            # awaits above. No await between these checks and the mutations
+            # below, so the decision cannot go stale.
+            if not _commit_target_intact():
+                _sel_native_destroyed("commit_target_moved")
                 state.push_slots_update()
                 return web.json_response(
                     {

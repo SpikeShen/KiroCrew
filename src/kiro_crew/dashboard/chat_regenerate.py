@@ -503,6 +503,28 @@ async def api_chat_slot_edit_resend(request: web.Request) -> web.Response:
             # Durably clear the native conversation BEFORE the history rewrite,
             # mirroring rewind. A failure here leaves the original branch intact
             # and dispatches no replacement turn.
+            def _sel_native_destroyed(reason: str) -> None:
+                """Record a destroyed native context that never reached a commit.
+
+                ``discard_conversation`` plus ``aflush`` are irreversible: past
+                that point the provider-side conversation is gone whether or not
+                this request goes on to succeed. SEL already carries this
+                endpoint's denials and its successful commits, so without this
+                record the ONE outcome that destroyed context WITHOUT committing
+                anything is the only one missing from the audit trail -- and it
+                is the only one that cannot be reconstructed from the others,
+                because in the trail it is indistinguishable from a denial that
+                touched nothing.
+                """
+                sel().log_api_access(
+                    caller=request_app or "dashboard",
+                    operation="chat.edit_resend",
+                    outcome="error",
+                    source="dashboard",
+                    resources=f"slot={slot.key},native_cleared=1",
+                    error=reason,
+                )
+
             if state.sessions is not None:
                 try:
                     # ``skip_if_busy``: an inbound channel turn holds the session
@@ -547,6 +569,9 @@ async def api_chat_slot_edit_resend(request: web.Request) -> web.Response:
                         session_key,
                         exc_info=True,
                     )
+                    # The in-memory discard already happened, so the native
+                    # context is gone even though its sid clear is not durable.
+                    _sel_native_destroyed("sid_flush_failed")
                     state.push_slots_update()
                     return web.json_response(
                         {
@@ -778,9 +803,19 @@ async def api_chat_slot_edit_resend(request: web.Request) -> web.Response:
                         "committed live state and dispatching the edited prompt",
                         slot.key,
                     )
+                else:
+                    # The native context is already gone and nothing was
+                    # committed against it: either the rewrite did not land, or
+                    # it landed on a slot that moved. This is the same
+                    # destroyed-without-a-commit outcome as the 503 paths below,
+                    # and it is the one exit where the client is not even told --
+                    # the cancellation propagates instead of a response, so the
+                    # SEL record is the ONLY place it can be attributed from.
+                    _sel_native_destroyed("request_cancelled")
                 raise
             except Exception:
                 logger.warning("edit-resend: failed to persist", exc_info=True)
+                _sel_native_destroyed("history_save_exception")
                 state.push_slots_update()
                 return web.json_response(
                     {
@@ -799,6 +834,7 @@ async def api_chat_slot_edit_resend(request: web.Request) -> web.Response:
                     "edit-resend: history save refused for %s (concurrent delete or rebind)",
                     slot.key,
                 )
+                _sel_native_destroyed("history_save_refused")
                 state.push_slots_update()
                 return web.json_response(
                     {
@@ -814,6 +850,7 @@ async def api_chat_slot_edit_resend(request: web.Request) -> web.Response:
             # awaits above. No await between these checks and the mutations
             # below, so the decision cannot go stale.
             if not _commit_target_intact():
+                _sel_native_destroyed("commit_target_moved")
                 state.push_slots_update()
                 return web.json_response(
                     {

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +13,8 @@ from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_app, _make_state
 
 from kiro_crew.dashboard import chat_persistence
+from kiro_crew.dashboard.chat_utils import slot_history_key
+from kiro_crew.dashboard.state import append_and_surface
 
 
 @pytest.fixture(autouse=True)
@@ -607,6 +610,223 @@ class TestRewindSlot:
             slot.task.cancel()
 
     @pytest.mark.asyncio
+    async def test_rewind_commit_keeps_a_row_that_arrived_during_the_boundaries(self, tmp_path):
+        """A workflow row landing mid-boundary must survive the commit.
+
+        ``workflow_inject`` appends straight on the event loop without taking
+        ``slot._lock``, so a row can land between the pre-await snapshot and the
+        commit. A wholesale replace drops it, and the rewrite above cannot put it
+        back because a rewrite deliberately skips the cross-process-append scan
+        -- keeping it in the live window is what makes the next ORDINARY flush
+        re-persist it.
+        """
+        state = _make_state(tmp_path)
+        slot = _populate_slot(state)
+        state.sessions._session_map.get = MagicMock(return_value="")
+
+        async def _arriving_discard(key, **kwargs):
+            # Runs inside the awaited boundary, through the real append door
+            # a workflow completion uses -- not a hand-built row.
+            append_and_surface(state, slot, "assistant", "workflow finished", "msg msg-a")
+            return True
+
+        state.sessions.discard_conversation = AsyncMock(side_effect=_arriving_discard)
+
+        app = _make_app(state)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post(
+                "/api/chat/slots/src/rewind",
+                json={"at_message_index": 0, "content": "edited first question"},
+            )
+            assert resp.status == 200
+
+        contents = [row.get("content") for row in slot.messages]
+        assert "workflow finished" in contents
+        # AFTER the edited row: ``monotonic_transcript_ts`` only ever moves a row
+        # forward, so an arrived row must never be ordered before the edit. On a
+        # coarse clock both appends can read the SAME instant, and list order is
+        # what separates that tie.
+        assert contents.index("workflow finished") > contents.index("edited first question")
+        # Retention must not resurrect the truncated suffix.
+        assert "second question" not in contents
+        if slot.task:
+            slot.task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_rewind_commit_keeps_a_pending_row_that_arrived_during_the_boundaries(
+        self, tmp_path
+    ):
+        """The arrived row must survive in the un-drained buffer too.
+
+        ``_pending`` is what an open client's stream reader drains, so a row
+        dropped there never reaches the screen even when it is in the window.
+        The prospective copy froze ``_pending`` BEFORE the arrival, so the same
+        wholesale replace loses it one field over.
+        """
+        state = _make_state(tmp_path)
+        slot = _populate_slot(state)
+        state.sessions._session_map.get = MagicMock(return_value="")
+
+        async def _arriving_discard(key, **kwargs):
+            append_and_surface(state, slot, "assistant", "workflow finished", "msg msg-a")
+            return True
+
+        state.sessions.discard_conversation = AsyncMock(side_effect=_arriving_discard)
+
+        app = _make_app(state)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post(
+                "/api/chat/slots/src/rewind",
+                json={"at_message_index": 0, "content": "edited first question"},
+            )
+            assert resp.status == 200
+
+        pending_contents = [row.get("content") for row in slot._pending]
+        assert "workflow finished" in pending_contents
+        if slot.task:
+            slot.task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_rewind_refuses_the_commit_when_the_slot_object_is_replaced(self, tmp_path):
+        """A close-and-recreate under the same name must not be committed onto.
+
+        ``close_slot`` cancels ``slot.task`` but not this handler, and a slot
+        recreated under the same name is a DIFFERENT conversation carrying the
+        SAME history key -- so the key re-check alone waves it through. Only
+        object identity separates them.
+        """
+        state = _make_state(tmp_path)
+        slot = _populate_slot(state)
+        original_messages = list(slot.messages)
+        state.sessions._session_map.get = MagicMock(return_value="")
+        observed: dict = {}
+
+        async def _replacing_discard(key, **kwargs):
+            state._slots.pop("src", None)
+            observed["replacement"] = state.get_or_create_slot("src")
+            # The axis-isolating precondition: if the history key ALSO moved,
+            # the key check would fire and this test would pass without ever
+            # exercising object identity.
+            observed["key_matches"] = slot_history_key(observed["replacement"]) == slot_history_key(
+                slot
+            )
+            return True
+
+        state.sessions.discard_conversation = AsyncMock(side_effect=_replacing_discard)
+
+        app = _make_app(state)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post(
+                "/api/chat/slots/src/rewind",
+                json={"at_message_index": 0, "content": "edited first question"},
+            )
+            assert resp.status == 503
+            assert (await resp.json())["code"] == "rewind_slot_rebound"
+
+        assert observed["key_matches"] is True
+        assert observed["replacement"] is not slot
+        # Neither conversation was committed onto.
+        assert observed["replacement"].messages == []
+        assert slot.messages == original_messages
+        if slot.task:
+            slot.task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_rewind_refuses_the_commit_when_the_dispatch_reservation_is_displaced(
+        self, tmp_path
+    ):
+        """A displaced reservation must refuse rather than report success.
+
+        Committing while another dispatcher owns ``slot.task`` leaves this
+        handler's turn running ALONGSIDE it -- two concurrent turns writing one
+        window -- and the reserved dispatch this commit releases has already been
+        cancelled, so the endpoint would report success for a turn that never
+        runs.
+        """
+        state = _make_state(tmp_path)
+        slot = _populate_slot(state)
+        original_messages = list(slot.messages)
+        state.sessions._session_map.get = MagicMock(return_value="")
+        observed: dict = {}
+
+        async def _displacing_discard(key, **kwargs):
+            observed["reserved"] = slot.task
+            observed["usurper"] = asyncio.create_task(asyncio.sleep(3600))
+            slot.task = observed["usurper"]
+            # Axis-isolating preconditions: neither of the other two axes moved,
+            # so only the reservation check can produce the refusal below.
+            observed["same_object"] = state._slots.get("src") is slot
+            observed["key_matches"] = slot_history_key(slot) == "dashboard:src"
+            return True
+
+        state.sessions.discard_conversation = AsyncMock(side_effect=_displacing_discard)
+
+        app = _make_app(state)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post(
+                "/api/chat/slots/src/rewind",
+                json={"at_message_index": 0, "content": "edited first question"},
+            )
+            assert resp.status == 503
+            assert (await resp.json())["code"] == "rewind_slot_rebound"
+
+        assert observed["same_object"] is True
+        assert observed["key_matches"] is True
+        assert observed["reserved"] is not observed["usurper"]
+        assert slot.messages == original_messages
+        observed["usurper"].cancel()
+        if observed["reserved"]:
+            observed["reserved"].cancel()
+
+    @pytest.mark.asyncio
+    async def test_rewind_records_a_sel_event_when_the_native_context_is_destroyed(
+        self, tmp_path, monkeypatch
+    ):
+        """A 503 after the native discard must leave an attributable SEL record.
+
+        Once ``discard_conversation`` and ``aflush`` succeed the native session
+        is unrecoverable. SEL carries this endpoint's denials and its successful
+        commits, so without a record here the one outcome that destroyed context
+        WITHOUT committing anything is indistinguishable in the audit trail from
+        a denial that touched nothing.
+        """
+        events: list[dict] = []
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.chat_rewind.sel",
+            lambda: SimpleNamespace(log_api_access=lambda **kw: events.append(kw)),
+        )
+        state = _make_state(tmp_path)
+        slot = _populate_slot(state)
+        state.sessions._session_map.get = MagicMock(return_value="")
+
+        def _fail_save(*_args, **_kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr("kiro_crew.dashboard.chat_rewind._save_slot_to_history", _fail_save)
+
+        app = _make_app(state)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post(
+                "/api/chat/slots/src/rewind",
+                json={"at_message_index": 0, "content": "edited first question"},
+            )
+            assert resp.status == 503
+            assert (await resp.json())["code"] == "rewind_save_failed"
+
+        destroyed = [
+            event for event in events if "native_cleared=1" in str(event.get("resources", ""))
+        ]
+        assert len(destroyed) == 1
+        record = destroyed[0]
+        assert record["operation"] == "chat.rewind"
+        assert record["outcome"] == "error"
+        assert record["error"] == "history_save_exception"
+        # Without the slot the record cannot be attributed to a conversation.
+        assert f"slot={slot.key}" in record["resources"]
+        if slot.task:
+            slot.task.cancel()
+
+    @pytest.mark.asyncio
     async def test_rewind_refuses_while_a_channel_turn_holds_the_session(self, tmp_path):
         """A busy session (inbound channel reply in flight) must 409, not discard.
 
@@ -691,6 +911,77 @@ class TestRewindSlot:
             await asyncio.sleep(0.02)
         _mock_run_chat.assert_awaited_once()
         assert _mock_run_chat.await_args.args[2] == "edited first question"
+
+    @pytest.mark.asyncio
+    async def test_rewind_cancelled_without_a_landed_rewrite_still_records_the_destruction(
+        self, tmp_path, monkeypatch
+    ):
+        """A cancellation that commits nothing must still leave a SEL record.
+
+        This is the one exit where the client is never told: the cancellation
+        propagates instead of a response, so an already-destroyed native context
+        can only be attributed from SEL. The sibling 503 paths all carry the
+        record; before this, the cancellation path did not.
+        """
+        events: list[dict] = []
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.chat_rewind.sel",
+            lambda: SimpleNamespace(log_api_access=lambda **kw: events.append(kw)),
+        )
+        state = _make_state(tmp_path)
+        slot = _populate_slot(state)
+        original_messages = list(slot.messages)
+        state.sessions._session_map.get = MagicMock(return_value="")
+
+        save_started = threading.Event()
+        release = threading.Event()
+
+        def _gated_refused_save(*_args, **_kwargs):
+            # Same gate as the landed-rewrite test, with the save REFUSING: the
+            # native discard has already happened, so nothing can be committed.
+            save_started.set()
+            release.wait()
+            return False
+
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.chat_rewind._save_slot_to_history", _gated_refused_save
+        )
+
+        from aiohttp.test_utils import make_mocked_request
+
+        from kiro_crew.dashboard.chat_rewind import api_chat_slot_rewind
+
+        app = _make_app(state)
+        fake_request = make_mocked_request(
+            "POST", "/api/chat/slots/src/rewind", match_info={"slot": "src"}, app=app
+        )
+        fake_request["app"] = ""
+
+        async def _json():
+            return {"at_message_index": 0, "content": "edited first question"}
+
+        fake_request.json = _json  # type: ignore[method-assign]
+        handler_task = asyncio.create_task(api_chat_slot_rewind(fake_request))
+        await asyncio.wait_for(asyncio.to_thread(save_started.wait), timeout=2)
+        handler_task.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await handler_task
+
+        # Nothing was committed -- the precondition that makes this the
+        # destroyed-without-a-commit outcome rather than the landed one.
+        assert slot.messages == original_messages
+        destroyed = [
+            event for event in events if "native_cleared=1" in str(event.get("resources", ""))
+        ]
+        assert len(destroyed) == 1
+        record = destroyed[0]
+        assert record["operation"] == "chat.rewind"
+        assert record["outcome"] == "error"
+        assert record["error"] == "request_cancelled"
+        assert f"slot={slot.key}" in record["resources"]
+        if slot.task:
+            slot.task.cancel()
 
     @pytest.mark.asyncio
     async def test_rewind_middle_user_message_keeps_prior_turns(self, tmp_path):
