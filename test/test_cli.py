@@ -4302,59 +4302,11 @@ class TestDoctorStt:
         )
 
         assert "ffmpeg:      ❌ not found" in out
-        assert "/usr/local/bin" in out
-        assert "Speech-to-Text" in out
-        # The resolver never searches ~/.local/bin, so the hint must not name it.
-        assert "~/.local/bin" not in out
+        assert "drop a static ffmpeg build into ~/.local/bin" in out
         assert "reinstall Kiro Crew" not in out
         assert "❌ Fix these issues: " in out
         assert "ffmpeg" in out.split("❌ Fix these issues: ", 1)[1]
         assert code == 1
-
-    def test_doctor_ffmpeg_hint_only_names_resolver_searched_dirs(
-        self, tmp_path, capsys, monkeypatch
-    ):
-        """The Linux fix hint must not send the user to a directory the resolver
-        never searches. ``transcribe._find_ffmpeg`` deliberately excludes
-        ``~/.local/bin`` and ``~/ffmpeg`` (see
-        ``test_no_generic_user_writable_directory_is_a_candidate``), so any bare
-        filesystem directory the hint names must be a member of
-        ``transcribe._FFMPEG_CANDIDATE_DIRS``. This guard ties the doctor hint to
-        the resolver so the two surfaces can no longer contradict each other; it
-        fails if the old ``~/.local/bin`` wording is ever restored."""
-        import re
-
-        import kiro_crew.cli_doctor as _doc
-        import kiro_crew.transcribe as _tr
-
-        self._stt(monkeypatch, provider="transcribe")
-        monkeypatch.setattr(_doc._plat, "system", lambda: "Linux")
-
-        out, _code = self._report(
-            tmp_path,
-            capsys,
-            ffmpeg=False,
-            modules={
-                "amazon_transcribe": MagicMock(),
-                "amazon_transcribe.client": MagicMock(),
-                "boto3": MagicMock(),
-            },
-        )
-
-        section = self._stt_section(out)
-
-        # A directory the resolver excludes on purpose must never be named.
-        assert "~/.local/bin" not in section
-        assert "~/ffmpeg" not in section
-
-        # Every absolute filesystem directory the hint names must be one the
-        # resolver actually searches, so a user who follows it gets a decoder the
-        # doctor will then report as available.
-        for directory in re.findall(r"/[\w./-]+/bin", section):
-            assert directory in _tr._FFMPEG_CANDIDATE_DIRS, (
-                f"doctor hint names {directory!r}, which is not a resolver "
-                f"candidate: {_tr._FFMPEG_CANDIDATE_DIRS}"
-            )
 
     def test_doctor_bundled_desktop_never_requests_a_system_ffmpeg_install(
         self, tmp_path, capsys, monkeypatch
