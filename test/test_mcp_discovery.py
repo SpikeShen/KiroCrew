@@ -2398,6 +2398,104 @@ class TestProbeTempContainment:
         alloc_spy.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_sealed_spec_declared_temp_falls_back_to_managed(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """#8747: a declared temp inside ``<data home>/run`` is refused, not honored.
+
+        Both backends seal that parent read-only, so honoring the declaration
+        hands the child a TMPDIR it cannot write -- silently, since the probe
+        still reports a green handshake. The declaration therefore yields to the
+        managed temp (allocated, carved out, and pointed at by the child's env),
+        and the sealed path never reaches the child.
+        """
+        import sys
+        from pathlib import Path
+
+        from kiro_crew import sandbox
+        from kiro_crew.mcp_gateway import backend_tmp as bt
+
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr(bt, "config_dir", lambda: home)
+        monkeypatch.setattr(sandbox, "config_dir", lambda: home)
+        sealed = home / "run" / "custom-tmp"
+
+        captured_wrap: dict = {}
+
+        def _wrap(argv, *a, env=None, **k):
+            captured_wrap.update(k)
+            return list(argv), dict(env if env is not None else os.environ), None
+
+        monkeypatch.setattr("kiro_crew.mcp_discovery.sandboxed_spawn_argv", _wrap)
+
+        server = McpServerInfo(
+            name="sealed-declared-temp",
+            command=sys.executable,
+            args=["-c", "pass"],
+            env={"TMPDIR": str(sealed)},
+        )
+        with patch(
+            "kiro_crew.mcp_discovery.create_subprocess_limited",
+            new_callable=AsyncMock,
+            side_effect=OSError("stop after env capture"),
+        ) as spawn_mock:
+            await probe_server(server)
+
+        carve = captured_wrap.get("extra_writable_dirs")
+        assert carve is not None and len(carve) == 1
+        scratch = Path(carve[0])
+        assert scratch.parent.parent == home / "run" / "mcp-tmp"
+        captured_env = spawn_mock.call_args.kwargs["env"]
+        # Every canonical key points at the managed scratch, so a child reading
+        # TMP or TEMP cannot land back on the sealed path either.
+        assert captured_env["TMPDIR"] == str(scratch)
+        assert captured_env["TMP"] == str(scratch)
+        assert captured_env["TEMP"] == str(scratch)
+        assert str(sealed) not in captured_env.values()
+
+    @pytest.mark.asyncio
+    async def test_sealed_declared_temp_stripped_when_allocation_fails(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        # Containment is fail-open, but never onto a directory already known to
+        # be read-only: with no managed dir to point at, the refused keys are
+        # stripped so the child inherits the ambient temp instead of the sealed
+        # path (#8747).
+        import sys
+
+        from kiro_crew import sandbox
+        from kiro_crew.mcp_gateway import backend_tmp as bt
+
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr(bt, "config_dir", lambda: home)
+        monkeypatch.setattr(sandbox, "config_dir", lambda: home)
+        monkeypatch.setattr(bt, "allocate_probe_tmp", MagicMock(side_effect=OSError("disk full")))
+        sealed = home / "run" / "custom-tmp"
+
+        def _wrap(argv, *a, env=None, **k):
+            return list(argv), dict(env if env is not None else os.environ), None
+
+        monkeypatch.setattr("kiro_crew.mcp_discovery.sandboxed_spawn_argv", _wrap)
+
+        server = McpServerInfo(
+            name="sealed-alloc-fail",
+            command=sys.executable,
+            args=["-c", "pass"],
+            env={"TMPDIR": str(sealed)},
+        )
+        with patch(
+            "kiro_crew.mcp_discovery.create_subprocess_limited",
+            new_callable=AsyncMock,
+            side_effect=OSError("stop after env capture"),
+        ) as spawn_mock:
+            await probe_server(server)
+
+        captured_env = spawn_mock.call_args.kwargs["env"]
+        assert not [key for key in captured_env if key.upper() in ("TMPDIR", "TMP", "TEMP")]
+
+    @pytest.mark.asyncio
     async def test_windows_probe_cleanup_defers_to_daemon_sweep(
         self, tmp_path, monkeypatch
     ) -> None:

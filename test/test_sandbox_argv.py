@@ -1115,6 +1115,156 @@ class TestWritableCarveouts:
         assert approved == []
 
 
+class TestSealedRuntimeParentPredicate:
+    """#8747: the question asked BEFORE a config-declared dir reaches a child.
+
+    A spec-declared ``TMPDIR`` under ``<data home>/run`` is sealed read-only by
+    both backends, and the write carve-out above is validated for self-derived
+    scratch only — so the caller's only safe move is to stop honoring the path,
+    which it can only do if this predicate answers honestly.
+    """
+
+    def _home(self, monkeypatch, tmp_path):
+        home = tmp_path / "crew-home"
+        (home / "run").mkdir(parents=True)
+        monkeypatch.setattr(sandbox_mod, "config_dir", lambda: home)
+        return home
+
+    def test_declared_path_inside_the_run_parent_is_sealed(self, monkeypatch, tmp_path):
+        home = self._home(monkeypatch, tmp_path)
+        assert sandbox_mod.path_within_sealed_runtime_parent(str(home / "run" / "custom-tmp"))
+        # The parent itself and the managed root under it answer the same way:
+        # containment, not a leaf allowlist.
+        assert sandbox_mod.path_within_sealed_runtime_parent(str(home / "run"))
+        assert sandbox_mod.path_within_sealed_runtime_parent(
+            str(home / "run" / "mcp-tmp" / "probe-x")
+        )
+
+    def test_path_outside_the_data_home_is_not_sealed(self, monkeypatch, tmp_path):
+        self._home(monkeypatch, tmp_path)
+        chosen = tmp_path / "operator-volume" / "tmp"
+        chosen.mkdir(parents=True)
+        assert not sandbox_mod.path_within_sealed_runtime_parent(str(chosen))
+        # An empty declaration is not a path and must not read as sealed.
+        assert not sandbox_mod.path_within_sealed_runtime_parent("")
+
+    @_POSIX_ONLY
+    def test_both_spellings_of_a_symlinked_data_home_are_sealed(self, monkeypatch, tmp_path):
+        # config_dir() deliberately preserves a supported symlinked data home,
+        # and path-based sandbox rules see each spelling independently — so a
+        # declaration written either way must be recognised.
+        real = tmp_path / "real-home"
+        (real / "run").mkdir(parents=True)
+        link = tmp_path / "linked-home"
+        link.symlink_to(real)
+        monkeypatch.setattr(sandbox_mod, "config_dir", lambda: link)
+        assert sandbox_mod.path_within_sealed_runtime_parent(str(link / "run" / "custom-tmp"))
+        assert sandbox_mod.path_within_sealed_runtime_parent(str(real / "run" / "custom-tmp"))
+
+    @_POSIX_ONLY
+    def test_a_symlink_climbing_back_into_the_run_parent_is_sealed(self, monkeypatch, tmp_path):
+        # Resolution ORDER is the whole test. `..` must be collapsed by realpath,
+        # after symlinks, the way the child's libc will collapse it -- collapsing
+        # it lexically first deletes the very symlink it was climbing out of, so
+        # a declaration routed through a link back into the seal reads as outside.
+        home = self._home(monkeypatch, tmp_path)
+        (home / "run" / "inner").mkdir()
+        link = tmp_path / "into-run"
+        link.symlink_to(home / "run" / "inner")
+        # Lexically `<link>/../tmp` collapses to `<tmp_path>/tmp`, which is
+        # outside the seal; resolved symlink-first it is `<home>/run/tmp`.
+        assert sandbox_mod.path_within_sealed_runtime_parent(str(link / ".." / "tmp"))
+
+    @staticmethod
+    def _install_case_insensitive_stat(monkeypatch, root: Path) -> None:
+        """Model an APFS-style case-insensitive ``stat`` under *root* only.
+
+        The bypass this guards (#9108) needs a filesystem that answers for a
+        differently-cased spelling, which Linux CI cannot create for real. What
+        APFS actually does is narrow: ``stat`` resolves each component
+        case-insensitively, while ``realpath`` keeps the caller's spelling (it
+        walks with ``lstat``/``readlink``, neither of which folds case) -- so the
+        alias never reaches a lexical comparison in canonical form. Reproduce
+        exactly that, delegating every path outside *root* to the real ``stat``
+        so nothing else in the process is disturbed.
+        """
+        real_stat = os.stat
+        root_str = str(root)
+
+        def _fold(path: str) -> str | None:
+            resolved = os.path.dirname(root_str)
+            for part in os.path.relpath(path, resolved).split(os.sep):
+                try:
+                    entries = os.listdir(resolved)
+                except OSError:
+                    return None
+                match = next((e for e in entries if e.lower() == part.lower()), None)
+                if match is None:
+                    return None
+                resolved = os.path.join(resolved, match)
+            return resolved
+
+        def fake_stat(path, *args, **kwargs):
+            try:
+                return real_stat(path, *args, **kwargs)
+            except FileNotFoundError:
+                if not isinstance(path, (str, os.PathLike)):
+                    raise
+                spelling = os.fspath(path)
+                if not isinstance(spelling, str) or not spelling.startswith(root_str + os.sep):
+                    raise
+                folded = _fold(spelling)
+                if folded is None:
+                    raise
+                return real_stat(folded, *args, **kwargs)
+
+        monkeypatch.setattr(os, "stat", fake_stat)
+
+    def test_a_case_alias_of_the_run_parent_is_sealed(self, monkeypatch, tmp_path):
+        # #9108: on case-insensitive APFS `<data home>/RUN` and `<data home>/run`
+        # are ONE directory, and realpath does not fold the difference -- so a
+        # lexical predicate answered "not sealed" for a path the backends seal,
+        # the probe honored the declaration, and the child got a read-only TMPDIR.
+        home = self._home(monkeypatch, tmp_path)
+        (home / "run" / "custom-tmp").mkdir()
+        self._install_case_insensitive_stat(monkeypatch, tmp_path)
+        assert sandbox_mod.path_within_sealed_runtime_parent(str(home / "RUN" / "custom-tmp"))
+        # The parent's own differently-cased spelling answers the same way.
+        assert sandbox_mod.path_within_sealed_runtime_parent(str(home / "Run"))
+
+    def test_a_missing_leaf_under_a_case_aliased_parent_is_sealed(self, monkeypatch, tmp_path):
+        # A declared temp normally does NOT exist yet, so the deepest EXISTING
+        # ancestor is what carries the identity: `<home>/RUN` folds onto the
+        # sealed parent, and nothing below a sealed directory can climb back out.
+        home = self._home(monkeypatch, tmp_path)
+        self._install_case_insensitive_stat(monkeypatch, tmp_path)
+        assert sandbox_mod.path_within_sealed_runtime_parent(
+            str(home / "RUN" / "not-created-yet" / "tmp")
+        )
+
+    def test_a_case_alias_outside_the_run_parent_is_still_not_sealed(self, monkeypatch, tmp_path):
+        # Identity is the whole test: a differently-cased path that folds onto a
+        # directory OUTSIDE the seal must stay honored, or the fix would refuse
+        # every operator-chosen temp whose spelling merely resembles the seal.
+        home = self._home(monkeypatch, tmp_path)
+        (home / "runtime-cache").mkdir()
+        self._install_case_insensitive_stat(monkeypatch, tmp_path)
+        assert not sandbox_mod.path_within_sealed_runtime_parent(
+            str(home / "RUNTIME-cache" / "tmp")
+        )
+
+    def test_a_real_case_alias_is_sealed_where_the_filesystem_folds_case(
+        self, monkeypatch, tmp_path
+    ):
+        # The same claim against the REAL filesystem, for the platforms that
+        # actually fold (APFS, NTFS). Skipped on a case-sensitive CI filesystem,
+        # where the aliased spelling is a different directory and nothing seals it.
+        home = self._home(monkeypatch, tmp_path)
+        if not (home / "RUN").is_dir():
+            pytest.skip("test filesystem is case-sensitive; no real case alias to build")
+        assert sandbox_mod.path_within_sealed_runtime_parent(str(home / "RUN" / "custom-tmp"))
+
+
 class TestBuildLauncherScript:
     @_POSIX_ONLY
     def test_strict_script_contains_dirs(self):
