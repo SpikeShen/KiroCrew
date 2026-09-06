@@ -10,7 +10,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Collection
 
 from kiro_crew.loop_lock import LoopBoundLock
 
@@ -27,6 +27,7 @@ import kiro_crew.dashboard.handlers as _h
 from kiro_crew import session_ledger
 from kiro_crew.acp.client import _resolve_kiro_bin_for_spawn
 from kiro_crew.config.paths import kiro_agents_dir
+from kiro_crew.cron import CronStoreBusy, cron_owner_matches
 from kiro_crew.dashboard import directive_queue
 from kiro_crew.dashboard.handlers import kiro_usage_api
 from kiro_crew.dashboard.handlers._shared import SESSION_SEARCH_TEXT_FIELDS
@@ -1282,11 +1283,15 @@ async def api_session_delete(request: web.Request) -> web.Response:
     if not state.conversation_log:
         return web.json_response({"error": "no conversation log"}, status=400)
     # delete_session enters _locked (flock acquire + os.close); offload off the
-    # loop so a wedged cross-process peer can't freeze chat/WS/heartbeat.
-    ok = await asyncio.to_thread(state.conversation_log.delete_session, key)
+    # loop so a wedged cross-process peer can't freeze chat/WS/heartbeat. The
+    # transcript's exact cron owner key is read in the SAME hop, strictly before
+    # the unlink that destroys it -- see _delete_session_capturing_owner.
+    ok, linked = await asyncio.to_thread(
+        _delete_session_capturing_owner, state.conversation_log, key, skip_pinned=False
+    )
     if ok:
         try:
-            await _remove_slot_for_history_key(state, key)
+            await _remove_slot_for_history_key(state, key, exact_owner_keys=(linked,))
         except Exception:
             logger.warning("cleanup failed for session %s", key, exc_info=True)
         state.push_slots_update()
@@ -1294,7 +1299,133 @@ async def api_session_delete(request: web.Request) -> web.Response:
     return web.json_response({"ok": ok})
 
 
-async def _remove_slot_for_history_key(state: DashboardState, key: str) -> None:
+def _linked_session_key_for_history_key(log: Any, key: str) -> str:
+    """The EXACT session key a history row's conversation runs on, or ``""``.
+
+    A channel-born tab persists ``linked_session_key`` in its transcript
+    metadata because nothing recreates that binding on restart. Cron jobs the
+    session created are stamped with THAT key, not with any ``dashboard:``
+    spelling of the transcript name, so it is the only string that can match
+    their owner — and after the transcript is unlinked there is nowhere left to
+    read it from. Best-effort: an unreadable or metadata-less row answers ``""``
+    and the caller falls back to its derived candidates.
+    """
+    try:
+        meta = log.get_metadata(key)
+    except Exception:
+        logger.warning("History delete: metadata read failed for %s", key, exc_info=True)
+        return ""
+    linked = meta.get("linked_session_key") if isinstance(meta, dict) else None
+    return str(linked) if linked else ""
+
+
+def _delete_session_capturing_owner(
+    log: Any, key: str, *, skip_pinned: bool
+) -> tuple[bool | None, str]:
+    """Read the row's exact cron owner key, THEN delete it. One worker hop.
+
+    The read has to happen before the unlink — ``delete_session`` removes the
+    only copy of ``linked_session_key``, and a post-restart channel session has
+    no live slot to recover it from either, so a release attempted afterwards
+    holds nothing that matches its jobs' owner and the ownership is stranded for
+    good. Ordering that matters is easier to keep correct when it cannot be
+    expressed any other way, so the two steps live in one function rather than
+    as two statements a later edit could reorder or an early ``return`` skip.
+
+    Returns ``(delete_result, linked_session_key)``; the result is
+    ``delete_session``'s own, including the ``None`` that ``skip_pinned=True``
+    answers for a pinned row.
+    """
+    linked = _linked_session_key_for_history_key(log, key)
+    if skip_pinned:
+        return log.delete_session(key, skip_pinned=True), linked
+    return log.delete_session(key, skip_pinned=False), linked
+
+
+# A release that loses the store-lock race is not recoverable later: the session
+# is already gone, nothing re-runs this funnel, and the job's owner key can never
+# be presented again. CronStoreBusy is transient contention (a large atomic save
+# on network storage, the CLI process, the off-loop batch worker), so a short
+# bounded backoff clears essentially every real case; past that the failure is
+# reported loudly instead of dropped.
+_CRON_RELEASE_ATTEMPTS = 3
+_CRON_RELEASE_BACKOFF_SECS = 0.2
+
+
+def _warn_stranded_cron_ownership(crons: Any, owner_keys: set[str], reason: str) -> None:
+    """Name the owner and the jobs whose ownership could not be released."""
+    stranded: list[str] = []
+    try:
+        # Cache-only and never raises CronStoreBusy, so this diagnostic cannot
+        # fail for the same reason the release just did. Good enough to NAME
+        # candidates for a human, which is all it is for -- it is deliberately
+        # not used to decide anything (see CronService.release_jobs_owned_by).
+        stranded = sorted(
+            job.id
+            for job in crons.list_jobs(include_disabled=True)
+            if getattr(job, "session_key", "")
+            and any(
+                cron_owner_matches(getattr(job, "session_key", ""), target) for target in owner_keys
+            )
+        )
+    except Exception:
+        logger.warning("History delete: could not enumerate stranded cron jobs", exc_info=True)
+    logger.warning(
+        "History delete: cron ownership release FAILED (%s) after %d attempt(s) for owner(s) %s; "
+        "job(s) %s may still be owned by a session that no longer exists — release them with "
+        "`kirocrew cron adopt <id> --release`",
+        reason,
+        _CRON_RELEASE_ATTEMPTS,
+        ", ".join(sorted(owner_keys)),
+        ", ".join(stranded) if stranded else "unknown (store not readable from cache)",
+    )
+
+
+async def _release_cron_ownership(crons: Any, owner_keys: set[str]) -> list[str]:
+    """Release every cron job owned by a RETIRED key among ``owner_keys``.
+
+    Delegates to :meth:`CronService.release_jobs_owned_by`, which resolves BOTH
+    decisions inside the store lock on its freshly reloaded state: which keys name
+    a retired principal, and which jobs still carry one of them. Nothing is
+    filtered here, deliberately — every candidate key goes down. Reading either
+    decision from ``list_jobs`` would read a cache with up to one timer-poll
+    interval of cross-process staleness, and both answers are then wrong in a way
+    that strands jobs this funnel will never revisit: a job re-adopted since the
+    read gets its new owner cleared, and a cron deleted by the CLI inside the
+    window is called live so its children are never released.
+
+    :class:`CronStoreBusy` is retried with a bounded backoff. Any failure that
+    outlives the retries — sustained contention, or an unreadable store that
+    ``_sync_for_write`` refuses to write over — is surfaced by
+    :func:`_warn_stranded_cron_ownership` naming the owner and the candidate job
+    ids, because nothing re-runs this funnel and the deleted session can never
+    present its key again. Returns the ids released (empty when there was nothing
+    to release, and when the release ultimately failed).
+    """
+    keys = {k for k in owner_keys if k}
+    if crons is None or not keys:
+        return []
+    reason = "cron store busy"
+    for attempt in range(_CRON_RELEASE_ATTEMPTS):
+        try:
+            return await crons.release_jobs_owned_by(keys)
+        except CronStoreBusy:
+            if attempt + 1 < _CRON_RELEASE_ATTEMPTS:
+                await asyncio.sleep(_CRON_RELEASE_BACKOFF_SECS * (attempt + 1))
+        except Exception as exc:
+            # Not contention, so a retry cannot help (an unreadable store, a
+            # failed save). Still report it through the recovery path rather than
+            # letting the caller's generic handler log it without the ids or the
+            # command that fixes it.
+            reason = f"{type(exc).__name__}: {exc}"
+            break
+    _warn_stranded_cron_ownership(crons, keys, reason)
+    return []
+
+
+async def _remove_slot_for_history_key(
+    state: DashboardState, key: str, *, exact_owner_keys: Collection[str] = ()
+) -> None:
     """Remove the active chat slot corresponding to a history key.
 
     Slot keys may be the raw history key (``dashboard_chat-X-TS`` when
@@ -1302,6 +1433,13 @@ async def _remove_slot_for_history_key(state: DashboardState, key: str) -> None:
     sessions that were never closed and resumed).  Try the exact key
     first, then the stripped variant.  Also kills the kiro-cli session
     to prevent orphaned processes.
+
+    ``exact_owner_keys`` carries session keys the CALLER read off the transcript
+    before unlinking it (its ``linked_session_key``). They cannot be derived
+    here: a slotless delete of a channel-born session — the normal case after a
+    restart — holds only the folded transcript spelling, while its cron jobs are
+    stamped with the channel's exact key. See
+    :func:`_delete_session_capturing_owner`.
     """
     from kiro_crew.dashboard.state import _normalize_slot_key
 
@@ -1434,6 +1572,35 @@ async def _remove_slot_for_history_key(state: DashboardState, key: str) -> None:
             logger.info("History delete: dropped %d autocompact override(s) for %s", dropped, key)
     except Exception:
         logger.warning("History delete: override sweep failed for %s", key, exc_info=True)
+    # A scheduled job outlives the conversation that created it by design, so a
+    # permanently deleted owner strands it: ownership is equality on a key no
+    # session can present again. Released, not deleted -- the job is the user's
+    # work and only its owner is gone. Runs LAST, with the ledger purge, so a
+    # dying turn cannot re-stamp the key after the release. Tab close does not
+    # reach this funnel, so an archived session keeps its jobs owned.
+    #
+    # ``exact_owner_keys`` is what makes a SLOTLESS channel session releasable:
+    # the derived candidates below are the folded transcript name and a
+    # ``dashboard:`` spelling of it, neither of which a channel job is stamped
+    # with, and the ``effective_session_key`` path above only runs when a live
+    # slot survived the restart.
+    owner_candidates = (
+        {k for k in ledger_candidates if k}
+        | {f"dashboard:{stripped}"}
+        | {k for k in exact_owner_keys if k}
+    )
+    try:
+        released = await _release_cron_ownership(getattr(state, "crons", None), owner_candidates)
+    except Exception:
+        logger.warning("History delete: cron ownership release failed for %s", key, exc_info=True)
+    else:
+        if released:
+            logger.info(
+                "History delete: released %d cron job(s) for %s: %s",
+                len(released),
+                key,
+                ", ".join(released),
+            )
 
 
 async def api_sessions_clear(request: web.Request) -> web.Response:
@@ -1476,11 +1643,17 @@ async def api_sessions_clear(request: web.Request) -> web.Response:
             # skip_pinned=True makes the pin-check-and-delete atomic so a
             # concurrent pin cannot sneak in between the metadata read and the
             # unlink. The invariant (lock, real test) now lives in history.py.
-            result = await asyncio.to_thread(log.delete_session, key, skip_pinned=True)
+            # The exact cron owner key rides along, read strictly before the
+            # unlink that destroys it (_delete_session_capturing_owner).
+            result, linked = await asyncio.to_thread(
+                _delete_session_capturing_owner, log, key, skip_pinned=True
+            )
             if result is None:
                 skipped += 1
             elif result:
-                cleanup_tasks.append(_remove_slot_for_history_key(state, key))
+                cleanup_tasks.append(
+                    _remove_slot_for_history_key(state, key, exact_owner_keys=(linked,))
+                )
                 count += 1
             else:
                 failed += 1

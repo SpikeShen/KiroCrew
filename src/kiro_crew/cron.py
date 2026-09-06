@@ -34,7 +34,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Iterator
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Collection, Iterator
 from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
@@ -458,6 +458,37 @@ class CronPendingMismatch(RuntimeError):
     the decider never saw (the agent can replace a pending request at any
     moment). Callers surface it as HTTP 409 ``stale_request``.
     """
+
+
+def cron_owner_matches(job_owner: str, target: str) -> bool:
+    """Whether ``job_owner`` names the same principal as ``target``.
+
+    THE one place an owner-key spelling is compared for release. A cron run does
+    not present a single spelling: ``build_cron_session_context`` mints
+    ``cron:<job id>`` for a persistent job and ``cron:<job id>:<run id>`` for a
+    stateless one, and the sequential-agent path mints
+    ``cron:<job id>:<agent>`` — and a job that run creates is stamped with
+    WHICHEVER of those the run happened to present. All of them name the same
+    principal, so plain ``==`` silently misses a child stamped with a longer
+    spelling than the caller holds: the release skips it, and because a match miss
+    is not a release FAILURE nothing warns.
+
+    Parses through :func:`cron_job_id_from_session_key` rather than its own
+    splitter, so the release path and the MCP surface cannot drift on what a
+    ``cron:`` key means.
+
+    Non-cron owners (``dashboard:``, a channel key) compare exactly. They have
+    ONE spelling each, and loosening them would let one session's key reach
+    another's jobs.
+
+    Deliberately NOT used by the MCP ownership gate (``_owned_by``), which stays
+    exact equality: this decides which jobs a RETIRED principal's cleanup may
+    release, not which jobs a live caller may read or write.
+    """
+    if job_owner == target:
+        return True
+    owner_principal = cron_job_id_from_session_key(job_owner)
+    return bool(owner_principal) and owner_principal == cron_job_id_from_session_key(target)
 
 
 class CronStoreBusy(TimeoutError):
@@ -2048,14 +2079,48 @@ class CronService:
         check happens INSIDE the same lock, after ``_sync()`` refreshed the
         in-memory view — closing the snapshot-then-append TOCTOU. Returns
         False when an existing job matches ``predicate``.
+
+        Applies the same dead-parent guard as :meth:`_persist_add_locked`; see
+        :meth:`_drop_owner_if_parent_gone`.
         """
         with self._file_lock():
             self._sync_for_write()
             if any(predicate(existing) for existing in self._jobs):
                 return False
+            self._drop_owner_if_parent_gone(job)
             self._jobs.append(job)
             self._save()
         return True
+
+    def _drop_owner_if_parent_gone(self, job: CronJob) -> None:
+        """Blank a ``cron:`` owner whose parent is absent. MUST hold the store lock.
+
+        Call after ``_sync_for_write()`` and before appending, so the decision is
+        made against the authoritative reloaded store. This is what makes a child
+        under a dead parent STRUCTURALLY impossible rather than merely cleaned up
+        afterwards: the removal cascade
+        (:meth:`_release_children_of_removed`) can only release children that
+        existed when it scanned, and a run of the parent still in flight can call
+        ``cron_add`` in the window between that scan and its own teardown — the
+        new row would then be born stamped with a key no session can ever present
+        again. Both halves resolve against the same in-lock reload, so whichever
+        transaction lands second sees the other's write.
+
+        Dropped rather than refused: the caller's request to schedule work is
+        honoured and the row lands in the documented ownerless state the CLI and
+        the Schedule page manage, which is the semantics every release path here
+        uses. Refusing would lose the user's job over a race they did not cause.
+        """
+        principal = cron_job_id_from_session_key(job.session_key)
+        if not principal or any(j.id == principal for j in self._jobs):
+            return
+        logger.warning(
+            "Cron job %s created with owner %s whose cron no longer exists; "
+            "storing it ownerless (manage from CLI or the Schedule page)",
+            job.id,
+            job.session_key,
+        )
+        job.session_key = ""
 
     def _build_job(
         self,
@@ -2205,9 +2270,13 @@ class CronService:
         :meth:`add_job_async` can run it in an executor thread. Raises
         :class:`CronStoreBusy` if the store lock stays contended past the
         timeout. Mirrors the :meth:`_remove_jobs_locked` batch precedent.
+
+        Applies the dead-parent guard before the append; see
+        :meth:`_drop_owner_if_parent_gone`.
         """
         with self._file_lock():
             self._sync_for_write()
+            self._drop_owner_if_parent_gone(job)
             self._jobs.append(job)
             self._save()
 
@@ -2761,6 +2830,10 @@ class CronService:
             self._pending_removals |= pending
             return []
         self._jobs = [j for j in self._jobs if j.id not in to_remove]
+        # A Done()/delete_after_run job that self-removes retires its principal
+        # just as a CLI remove does, so its children are released in the SAME
+        # save (see _release_children_of_removed).
+        restore = self._release_children_of_removed(to_remove)
         # BACKGROUND writer: this runs inside the due-scan, so an unreadable
         # store must not abort the tick and stop every other job. The deferred
         # delete simply stays pending until the store is readable again.
@@ -2768,6 +2841,8 @@ class CronService:
             self._save()
         except CronStoreUnreadable as exc:
             logger.warning("Deferred cron removal not persisted: %s", exc)
+            for child, previous_owner in restore:
+                child.session_key = previous_owner
             # REQUEUE, or the intent is lost outright. The claim above already
             # emptied the queue, so the comment's promise that the delete "stays
             # pending until the store is readable again" only holds if it is put
@@ -2816,17 +2891,76 @@ class CronService:
                 cron_script.bump_grant_epoch(j.id)
 
     def _remove_job_locked(self, job_id: str) -> bool:
-        """Lock/reload/mutate/save core of :meth:`remove_job` (no timer work)."""
+        """Lock/reload/mutate/save core of :meth:`remove_job` (no timer work).
+
+        Removing a job also releases every job that job OWNS, in the same locked
+        write — see :meth:`_release_children_of_removed`.
+        """
         with self._file_lock():
             self._sync_for_write()
             before = len(self._jobs)
             self._bump_grant_epochs_for({job_id})
             self._jobs = [j for j in self._jobs if j.id != job_id]
             if len(self._jobs) < before:
-                self._save()
+                restore = self._release_children_of_removed({job_id})
+                try:
+                    self._save()
+                except BaseException:
+                    for child, previous_owner in restore:
+                        child.session_key = previous_owner
+                    raise
                 logger.info("Removed cron job %s", job_id)
                 return True
         return False
+
+    def _release_children_of_removed(self, removed_ids: set[str]) -> list[tuple[CronJob, str]]:
+        """Clear ownership on jobs whose cron principal is among ``removed_ids``.
+
+        IN-LOCK ONLY: callers must already hold :meth:`_file_lock`, must have
+        reloaded through ``_sync_for_write()``, must have filtered the removed
+        rows out of ``self._jobs`` first (so a removed job cannot release
+        itself), and must ``_save()`` afterwards — the point is that a removal
+        and the release it implies land in ONE atomic write, never as two
+        transactions a crash could split.
+
+        Removing a cron retires its principal: ``cron:<job id>`` is presented
+        only by runs of that job, so once the row is gone no session can ever
+        present the key again and any job it created is manageable by nobody —
+        ``cron_list`` omits it, ``cron_update``/``cron_remove`` answer "job not
+        found", and it keeps firing. That is the same dead-owner state the
+        history-delete funnel exists to prevent, and the funnel cannot cover it:
+        it deliberately SKIPS a live cron principal, so a transcript deleted
+        before the cron is removed leaves nothing behind to notice later.
+
+        Released, not deleted or re-parented — the same semantics the delete
+        funnel uses. A child is the user's own scheduled work; only its owner is
+        gone, so it drops to the documented ownerless state the CLI and the
+        Schedule page manage rather than a third state or a guessed new parent.
+
+        Matches through :func:`cron_owner_matches`, the one matcher every release
+        path shares, so a child stamped under a longer spelling
+        (``cron:<parent>:<run id>``, ``cron:<parent>:<agent>``) is caught too.
+        Returns ``(job, previous_owner)`` pairs so the caller can roll the cache
+        back if its ``_save()`` fails.
+        """
+        if not removed_ids:
+            return []
+        targets = {f"cron:{job_id}" for job_id in removed_ids if job_id}
+        restore: list[tuple[CronJob, str]] = []
+        for job in self._jobs:
+            if not job.session_key:
+                continue
+            if not any(cron_owner_matches(job.session_key, target) for target in targets):
+                continue
+            restore.append((job, job.session_key))
+            job.session_key = ""
+        if restore:
+            logger.info(
+                "Released %d cron job(s) whose owning cron was removed: %s",
+                len(restore),
+                ", ".join(sorted(job.id for job, _ in restore)),
+            )
+        return restore
 
     def _remove_jobs_locked(self, job_ids: list[str]) -> tuple[list[str], list[str]]:
         """Sync core of :meth:`remove_jobs` — lock/reload/mutate/save only.
@@ -2852,7 +2986,13 @@ class CronService:
             if targets:
                 self._bump_grant_epochs_for(targets)
                 self._jobs = [j for j in self._jobs if j.id not in targets]
-                self._save()
+                restore = self._release_children_of_removed(targets)
+                try:
+                    self._save()
+                except BaseException:
+                    for child, previous_owner in restore:
+                        child.session_key = previous_owner
+                    raise
                 logger.info("Removed %d cron job(s) in batch", len(targets))
         return removed, missing
 
@@ -2958,7 +3098,13 @@ class CronService:
                 targets = set(removed)
                 self._bump_grant_epochs_for(targets)
                 self._jobs = [j for j in self._jobs if j.id not in targets]
-                self._save()
+                restore = self._release_children_of_removed(targets)
+                try:
+                    self._save()
+                except BaseException:
+                    for child, previous_owner in restore:
+                        child.session_key = previous_owner
+                    raise
                 logger.info("Removed %d cron job(s) owned by %s", len(removed), owner_prefix)
         return removed
 
@@ -3038,6 +3184,147 @@ class CronService:
                     self._save()
                     return True
         return False
+
+    def _release_jobs_owned_by_locked(self, owner_keys: Collection[str]) -> list[str]:
+        """Select AND release every job owned by ``owner_keys`` under ONE lock.
+
+        Sync core of :meth:`release_jobs_owned_by` — lock/reload/select/mutate/
+        save only, no timer work (so it is safe in an executor thread;
+        ``_arm_timer`` needs the event loop). Same shape, and the same critical
+        property, as :meth:`_remove_jobs_by_owner_locked`: BOTH decisions this
+        makes — which owner keys name a retired principal, and which jobs still
+        carry one of them — happen AFTER the in-lock ``_sync_for_write()``
+        reload, against the authoritative on-disk state rather than a snapshot
+        taken before the lock.
+
+        That is the whole reason this exists instead of a caller-side
+        ``list_jobs()`` loop over :meth:`adopt_job`. ``list_jobs`` is cache-only
+        with up to one timer-poll interval of cross-process staleness, and both
+        decisions are wrong when read from it:
+
+        * OWNER staleness — between a pre-lock snapshot and a per-id write,
+          another surface (the CLI's ``cron adopt``, a cron-injected slot
+          re-stamping its key) can hand the job to a DIFFERENT owner, and an
+          unconditional per-id release would clear that new owner, silently
+          unbinding a job from a session that legitimately owns it.
+        * PRINCIPAL staleness — a ``cron:<job id>`` owner is only live while that
+          job exists, so its jobs must be kept owned; but a CLI ``cron remove``
+          inside the staleness window leaves the cache still listing the job, and
+          a cached liveness check would call the dead principal live and skip
+          releasing its children. Nothing re-runs the delete funnel, so those
+          jobs strand permanently.
+
+        Conditioning both on the reloaded state makes the release a
+        compare-and-clear against current truth: a re-adopted job keeps its new
+        owner, a job whose cron principal is still scheduled keeps its owner, and
+        either is simply absent from the returned ids.
+
+        Ownership is matched through :func:`cron_owner_matches`, not ``==``,
+        because one cron principal is stamped under several spellings
+        (``cron:<job id>``, ``cron:<job id>:<run id>``,
+        ``cron:<job id>:<agent>``) depending on which run created the job. An
+        exact comparison misses a child stamped with a longer spelling than the
+        caller holds, and a match MISS is not a release failure, so nothing warns.
+
+        All-or-nothing within the single ``_file_lock`` transaction: a contended
+        store raises :class:`CronStoreBusy` before any mutation, and a save that
+        fails after the mutation puts every touched owner back before re-raising,
+        so the cache never reports a release that is not on disk. Returns the ids
+        actually released.
+
+        Selects through :meth:`_sync_for_write`, not ``_sync()``, for the reason
+        spelled out on :meth:`_remove_jobs_by_owner_locked`: ``_load`` degrades an
+        unreadable store to an empty job list, so an ownership scan over it would
+        answer "this session owned nothing", skip the save, and report a clean
+        release while the still-stamped jobs sit on disk. ``_sync_for_write``
+        refuses first, so the caller learns the release did not happen. It also
+        fails the liveness read closed, which matters in the opposite direction:
+        an empty job list would call every cron principal dead and release jobs a
+        live cron still owns.
+        """
+        owners = {k for k in owner_keys if k}
+        if not owners:
+            return []
+        released: list[str] = []
+        with self._file_lock():
+            self._sync_for_write()
+            # Principal liveness, decided on the state the reload just brought
+            # in. A cron whose row is still here AND whose key is stable across
+            # runs presents that key again on every future run, so releasing the
+            # jobs it created would leave a LIVE owner unable to list, update or
+            # remove its own work.
+            #
+            # Existence alone is NOT enough. A stateless job mints
+            # ``cron:<job id>:<uuid4>`` fresh per fire, so the key its last run
+            # stamped on a child is already unpresentable even though the parent
+            # row is still scheduled -- retaining that ownership strands the child
+            # exactly as a removed parent would. ``cron_session_key_is_stable``
+            # is the predicate that lives beside the mint sites, so this cannot
+            # drift from what those sites actually produce; inferring it from the
+            # key's SHAPE is wrong, because a durable sequential-agent key and an
+            # ephemeral per-run key are both three segments.
+            live_by_id = {job.id: job for job in self._jobs}
+            targets: set[str] = set()
+            for key in owners:
+                principal = cron_job_id_from_session_key(key)
+                parent = live_by_id.get(principal) if principal else None
+                if parent is not None and cron_session_key_is_stable(parent):
+                    continue
+                targets.add(key)
+            if not targets:
+                return []
+            # Previous owners are recorded so the cache can be put BACK if the
+            # save fails. ``_save`` serializes ``self._jobs``, so the mutation
+            # has to precede persistence -- but an unwritable store (ENOSPC, a
+            # read-only volume) would then leave memory saying "ownerless" while
+            # disk still names the old owner: every ownership decision in this
+            # process reads the released state, the delete reports success, and
+            # the old owner resurrects on the next restart. Rolling back keeps
+            # the two agreeing on the only outcome that actually happened.
+            restore: list[tuple[CronJob, str]] = []
+            for job in self._jobs:
+                if not job.session_key:
+                    continue
+                if not any(cron_owner_matches(job.session_key, target) for target in targets):
+                    continue
+                restore.append((job, job.session_key))
+                job.session_key = ""
+                released.append(job.id)
+            if released:
+                try:
+                    self._save()
+                except BaseException:
+                    for job, previous_owner in restore:
+                        job.session_key = previous_owner
+                    raise
+                logger.info(
+                    "Released %d cron job(s) owned by deleted session(s) %s",
+                    len(released),
+                    ", ".join(sorted(targets)),
+                )
+        return released
+
+    async def release_jobs_owned_by(self, owner_keys: Collection[str]) -> list[str]:
+        """Clear ``session_key`` on every job owned by a RETIRED ``owner_keys`` key.
+
+        The batch, owner-conditioned sibling of ``adopt_job(job_id, "")``: it
+        releases jobs back to the operator surfaces (CLI and the dashboard
+        Schedule page) the way a single ``--release`` does, but resolves both
+        principal liveness and current ownership INSIDE the store lock, on the
+        freshly reloaded state — so neither decision can be made from a stale
+        cache (see :meth:`_release_jobs_owned_by_locked`). Callers pass every
+        candidate owner key and do no filtering of their own.
+
+        One lock/reload/select/save transaction, all-or-nothing; propagates
+        :class:`CronStoreBusy` on a contended store so the caller can retry
+        rather than silently dropping the release. The disk work runs in a
+        worker thread; only ``_arm_timer`` runs back on the loop, and only when
+        something was actually released. Returns the released ids.
+        """
+        released = await asyncio.to_thread(self._release_jobs_owned_by_locked, owner_keys)
+        if released:
+            self._arm_timer()
+        return released
 
     def enable_job(self, job_id: str, enabled: bool = True) -> bool:
         """Enable or disable a job by ID.
