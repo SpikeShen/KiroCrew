@@ -81,7 +81,11 @@ def resolve_provider_cli(executable: str) -> str:
             last_error = "empty override"
             continue
         try:
-            return validate_provider_executable(candidate)
+            # Monitor probes can expose an ambient provider login or an
+            # invocation-scoped token. Their executable therefore needs the
+            # protected system-owned chain even when interactive provider
+            # features use the default relaxed policy.
+            return validate_provider_executable(candidate, require_protected=True)
         except ValueError as exc:
             last_error = str(exc)
     detail = f" ({last_error})" if last_error else ""

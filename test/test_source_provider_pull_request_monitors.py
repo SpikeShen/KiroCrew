@@ -13,6 +13,7 @@ from urllib.request import Request
 import pytest
 
 from kiro_crew import github_runner
+from kiro_crew.monitoring import azure_devops_pull_request as azure_module
 from kiro_crew.monitoring import bitbucket_pull_request as bitbucket_module
 from kiro_crew.monitoring import provider_cli as provider_cli_module
 from kiro_crew.monitoring.azure_devops_pull_request import AzureDevOpsPullRequestProvider
@@ -774,6 +775,43 @@ def test_bitbucket_loads_one_non_propagating_credential_snapshot(monkeypatch):
     assert fetch_credentials == [credentials] * 4
 
 
+def test_bitbucket_channel_probe_does_not_load_owner_credentials(monkeypatch):
+    supplied_credentials: list[object] = []
+    payloads = {
+        "pull_request": {
+            "state": "OPEN",
+            "draft": False,
+            "source": {"commit": {"hash": "fed"}},
+            "participants": [],
+        },
+        "statuses": {"values": [], "next": None},
+        "tasks": {"values": [], "next": None},
+        "conflicts": {"values": [], "next": None},
+    }
+
+    def fail_load():
+        pytest.fail("channel probe loaded the operator credential store")
+
+    def fetch(_target, resource, credentials):
+        supplied_credentials.append(credentials)
+        return payloads[resource]
+
+    monkeypatch.setattr(
+        bitbucket_module,
+        "KiroCrewConfig",
+        SimpleNamespace(load=fail_load),
+    )
+    monkeypatch.setattr(BitbucketPullRequestProvider, "_fetch_https", staticmethod(fetch))
+
+    result = BitbucketPullRequestProvider().probe(
+        "https://bitbucket.org/acme/widgets/pull-requests/10",
+        use_owner_credentials=False,
+    )
+
+    assert result.observation.status is MonitorObservationStatus.SUCCESS
+    assert supplied_credentials == [{}] * 4
+
+
 def test_bitbucket_missing_source_commit_stays_pending():
     payloads = {
         "pull_request": {
@@ -958,6 +996,37 @@ def test_azure_forbidden_is_terminal_and_omits_provider_text(monkeypatch):
     assert result.observation.provider_error is ProviderErrorKind.AUTHORIZATION
     assert result.observation.reason_code == "provider_authorization"
     assert "super-secret" not in result.observation.reason_code
+
+
+def test_azure_channel_probe_does_not_load_owner_credentials_or_cli_state(monkeypatch):
+    audit_calls: list[str] = []
+
+    def fail(*_args, **_kwargs):
+        pytest.fail("channel probe reached operator-owned Azure state")
+
+    monkeypatch.setattr(
+        "kiro_crew.monitoring.azure_devops_pull_request.KiroCrewConfig",
+        SimpleNamespace(load=fail),
+    )
+    monkeypatch.setattr(
+        "kiro_crew.monitoring.azure_devops_pull_request.run_provider_cli",
+        fail,
+    )
+    monkeypatch.setattr(
+        azure_module,
+        "audit_provider_cli_denied",
+        audit_calls.append,
+        raising=False,
+    )
+
+    result = AzureDevOpsPullRequestProvider().probe(
+        "https://dev.azure.com/acme/project/_git/widgets/pullrequest/9",
+        use_owner_credentials=False,
+    )
+
+    assert result.observation.provider_error is ProviderErrorKind.AUTHORIZATION
+    assert result.observation.reason_code == "provider_authorization"
+    assert audit_calls == ["az"]
 
 
 def test_azure_cli_uses_supported_project_scoping_for_each_command(monkeypatch):
@@ -1225,7 +1294,8 @@ def test_resolve_provider_cli_uses_only_validated_candidates(monkeypatch):
         lambda _executable: ("/untrusted/glab", "/trusted/glab"),
     )
 
-    def validate(candidate):
+    def validate(candidate, *, require_protected=False):
+        assert require_protected
         if candidate == "/untrusted/glab":
             raise ValueError("untrusted executable")
         return candidate
@@ -1237,6 +1307,26 @@ def test_resolve_provider_cli_uses_only_validated_candidates(monkeypatch):
     monkeypatch.setenv("KIROCREW_GLAB_BIN", "")
     with pytest.raises(provider_cli_module.SetupError, match="empty override"):
         provider_cli_module.resolve_provider_cli("glab")
+
+
+def test_monitor_provider_resolution_requires_a_protected_executable(monkeypatch):
+    """Autonomous probes must not hand credentials to a gateway-writable binary."""
+    validations: list[tuple[str, bool]] = []
+    monkeypatch.delenv("KIROCREW_AZ_BIN", raising=False)
+    monkeypatch.setattr(
+        provider_cli_module,
+        "provider_executable_candidates",
+        lambda _executable: ("/provider/az",),
+    )
+
+    def validate(candidate: str, *, require_protected: bool = False) -> str:
+        validations.append((candidate, require_protected))
+        return candidate
+
+    monkeypatch.setattr(provider_cli_module, "validate_provider_executable", validate)
+
+    assert provider_cli_module.resolve_provider_cli("az") == "/provider/az"
+    assert validations == [("/provider/az", True)]
 
 
 def test_run_provider_cli_audits_resolution_denial(monkeypatch):

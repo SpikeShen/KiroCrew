@@ -5282,6 +5282,12 @@ async def _start_next_queued_turn(state: DashboardState, slot: _ChatSlot) -> boo
     directive_user_origin = bool(consumed) and all(
         item.get("_directive_user_origin") is True for item in consumed
     )
+    # Channel authority is the narrower credential boundary. If batching combines
+    # channel and dashboard entries, the whole turn must retain that boundary so a
+    # directive derived from either message cannot inherit dashboard-owner secrets.
+    directive_channel_origin = bool(consumed) and any(
+        item.get("_directive_channel_origin") is True for item in consumed
+    )
     if slot._stopping and not is_system_injection:
         slot.append(
             "error",
@@ -5478,6 +5484,7 @@ async def _start_next_queued_turn(state: DashboardState, slot: _ChatSlot) -> boo
     _run_kwargs: dict[str, Any] = {
         "_synthetic_payload": synthetic_payload,
         "_directive_user_origin": directive_user_origin,
+        "_directive_channel_origin": directive_channel_origin,
     }
     if _settleable or _delivery_callbacks:
         _run_kwargs["_on_consumed"] = _note_consumed
@@ -5702,6 +5709,7 @@ async def _run_chat(
     _prompt_depth: int = 0,
     _synthetic_payload: bool = False,
     _directive_user_origin: bool = False,
+    _directive_channel_origin: bool = False,
     regenerate_hint: str = "",
     _on_consumed: "Callable[[bool], None] | None" = None,
     _on_irreversibly_consumed: "Callable[[], Awaitable[None] | None] | None" = None,
@@ -6081,6 +6089,7 @@ async def _run_chat(
                 _on_irreversibly_consumed if not _irreversible_consumption_reported else None
             ),
             directive_user_origin=_directive_user_origin,
+            directive_channel_origin=_directive_channel_origin,
         )
 
     # Model-activity marker for the poisoned-conversation streak ONLY:
@@ -6325,6 +6334,7 @@ async def _run_chat(
                     expanded,
                     _prompt_depth=1,
                     _directive_user_origin=_directive_user_origin,
+                    _directive_channel_origin=_directive_channel_origin,
                 )
             elif status == "blocked":
                 sel().log_tool_invocation(
@@ -8057,6 +8067,7 @@ async def _run_chat(
                             str(_oob.get("kind") or ""),
                             dict(_oob.get("args") or {}),
                             producer_is_user_facing=_directive_user_origin,
+                            producer_is_channel=_directive_channel_origin,
                         )
                         logger.info(
                             "session-directive applied OUT OF BAND for %s "
@@ -8239,6 +8250,7 @@ async def _run_chat(
                                     _dir_tool,
                                     _dir_args,
                                     producer_is_user_facing=_directive_user_origin,
+                                    producer_is_channel=_directive_channel_origin,
                                 )
                             )
                             _dir_consumed_out[event.tool_call_id] = _out

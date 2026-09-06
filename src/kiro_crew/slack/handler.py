@@ -2626,6 +2626,7 @@ async def maybe_route_linked_thread(
                 _linked_slot,
                 text,
                 _directive_user_origin=True,
+                _directive_channel_origin=True,
             )
         )
         _linked_slot.task = _chat_task
@@ -2642,6 +2643,7 @@ async def maybe_route_linked_thread(
             text,
             meta=containment_meta(_dashboard_state, _linked_slot),  # type: ignore[arg-type]
             directive_user_origin=True,
+            directive_channel_origin=True,
         )
     _dashboard_state.push_slots_update()  # type: ignore[attr-defined]
     sel().log_tool_invocation(

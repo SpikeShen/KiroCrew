@@ -109,6 +109,7 @@ async def apply_session_directive(
     args: dict[str, Any],
     *,
     producer_is_user_facing: bool = False,
+    producer_is_channel: bool = False,
 ) -> str:
     """Apply directive *kind* with *args* to *slot*/*session_key*; return a
     confirmation string for the model. Fail-soft: any error is returned as a
@@ -161,9 +162,13 @@ async def apply_session_directive(
         )
     try:
         if kind == "monitor_start":
-            result = await _monitor_start(state, session_key, args)
+            result = await _monitor_start(
+                state, session_key, args, producer_is_channel=producer_is_channel
+            )
         elif kind == "monitor_watch":
-            result = await _monitor_watch(state, session_key, args)
+            result = await _monitor_watch(
+                state, session_key, args, producer_is_channel=producer_is_channel
+            )
         elif kind == "monitor_update":
             result = await _monitor_update(state, session_key, args)
         elif kind == "monitor_stop":
@@ -218,9 +223,16 @@ def _structured_binding(session_key: str) -> str | None:
     return structured_monitor_binding_key_for(session_key)
 
 
-async def _monitor_start(state: Any, session_key: str, args: dict[str, Any]) -> str:
+async def _monitor_start(
+    state: Any,
+    session_key: str,
+    args: dict[str, Any],
+    *,
+    producer_is_channel: bool,
+) -> str:
     from kiro_crew.autonudge import get_instance
     from kiro_crew.autonudge_authz import authorize_and_add_nudge
+    from kiro_crew.monitoring.models import MonitorCreationSurface
 
     svc = get_instance()
     # Not-applied paths RAISE so the wrapper audits them as denied — a plain
@@ -260,6 +272,11 @@ async def _monitor_start(state: Any, session_key: str, args: dict[str, Any]) -> 
         # STOPPED row: monitor_update's approval-stall refusal names
         # monitor_start as the remedy, so refusing here deadlocks it.
         replace_stopped=True,
+        creation_surface=(
+            MonitorCreationSurface.CHANNEL
+            if producer_is_channel
+            else MonitorCreationSurface.DASHBOARD
+        ),
     )
     if error is not None:
         # The authorizer already audited its own refusal; the wrapper's record
@@ -290,10 +307,20 @@ async def _monitor_start(state: Any, session_key: str, args: dict[str, Any]) -> 
     )
 
 
-async def _monitor_watch(state: Any, session_key: str, args: dict[str, Any]) -> str:
+async def _monitor_watch(
+    state: Any,
+    session_key: str,
+    args: dict[str, Any],
+    *,
+    producer_is_channel: bool,
+) -> str:
     from kiro_crew.autonudge import get_instance
     from kiro_crew.autonudge_authz import authorize_and_add_nudge
-    from kiro_crew.monitoring.models import MonitorBudgets, MonitorState
+    from kiro_crew.monitoring.models import (
+        MonitorBudgets,
+        MonitorCreationSurface,
+        MonitorState,
+    )
 
     svc = get_instance()
     if svc is None:
@@ -331,6 +358,11 @@ async def _monitor_watch(state: Any, session_key: str, args: dict[str, Any]) -> 
         # inspection must not block this session's next directive arm.
         replace_stopped=True,
         monitor=monitor,
+        creation_surface=(
+            MonitorCreationSurface.CHANNEL
+            if producer_is_channel
+            else MonitorCreationSurface.DASHBOARD
+        ),
     )
     if error is not None:
         raise _DirectiveDenied(f"Failed to start structured monitor: {error}")
