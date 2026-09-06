@@ -8841,6 +8841,14 @@
         "continue": "继续",
         "continue_hint": "从中断处继续。已经写入磁盘的改动都还在。"
       },
+      "escalationNotice": {
+        "deadline": "请在 {{time}} 前回复；若无回复，不会发生任何操作，该请求将保持待处理。",
+        "needs_you": "需要你",
+        "options": "如需作答，请在此会话中输入以下选项之一作为回复：{{list}}",
+        "reply_hint": "在此会话中回复即可作答。",
+        "veto": "如果你在 {{time}} 前没有回复，{{member}} 将：{{action}}",
+        "veto_generic": "如果你在 {{time}} 前没有回复，该成员将：{{action}}"
+      },
       "folderPanel": {
         "clear_search": "清除搜索",
         "empty_folder": "空目录",

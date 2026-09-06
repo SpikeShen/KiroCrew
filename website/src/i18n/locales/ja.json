@@ -8841,6 +8841,14 @@
         "continue": "続行",
         "continue_hint": "停止した箇所から再開します。ディスクに書き込まれた作業内容はそのまま残ります。"
       },
+      "escalationNotice": {
+        "deadline": "{{time}}までに返信してください。返信がない場合は何も起こらず、依頼は未解決のままです。",
+        "needs_you": "あなたの判断が必要です",
+        "options": "回答するには、このスレッドで次のいずれかを入力して返信してください: {{list}}",
+        "reply_hint": "このスレッドで返信して回答してください。",
+        "veto": "{{time}}までに返信がない場合、{{member}}は次を実行します: {{action}}",
+        "veto_generic": "{{time}}までに返信がない場合、メンバーは次を実行します: {{action}}"
+      },
       "folderPanel": {
         "clear_search": "検索をクリア",
         "empty_folder": "空のフォルダー",

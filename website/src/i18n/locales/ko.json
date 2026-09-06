@@ -8841,6 +8841,14 @@
         "continue": "계속",
         "continue_hint": "중단된 지점부터 다시 시작합니다. 이미 디스크에 기록된 작업은 그대로 유지됩니다."
       },
+      "escalationNotice": {
+        "deadline": "{{time}}까지 답해 주세요. 답이 없으면 아무 일도 일어나지 않고 요청은 열린 상태로 남습니다.",
+        "needs_you": "결정이 필요합니다",
+        "options": "답하려면 이 스레드에서 다음 중 하나를 입력해 답장하세요: {{list}}",
+        "reply_hint": "이 스레드에서 답장하여 답하세요.",
+        "veto": "{{time}}까지 답하지 않으면 {{member}}가 다음을 수행합니다: {{action}}",
+        "veto_generic": "{{time}}까지 답하지 않으면 멤버가 다음을 수행합니다: {{action}}"
+      },
       "folderPanel": {
         "clear_search": "검색 지우기",
         "empty_folder": "빈 폴더",

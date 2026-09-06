@@ -6,6 +6,7 @@ import asyncio
 import concurrent.futures
 import contextlib
 import fnmatch
+import functools
 import hashlib
 import json
 import logging
@@ -2283,6 +2284,185 @@ def row_mid(row: Any) -> str | None:
     return mid if isinstance(mid, str) and mid else None
 
 
+#: Per member-slot: the most recently scheduled persist-and-mark task for a
+#: human reply. Each new reply's task awaits its predecessor before it saves
+#: and marks, so the index settles in TRANSCRIPT order even when saves contend
+#: (see ``_mark_member_escalations_answered``). Entries drop themselves once
+#: done; the dict never holds a finished task for long.
+_ESCALATION_MARK_CHAIN: dict[str, "asyncio.Task[None]"] = {}
+
+
+def _row_escalation_ids(meta: dict | None) -> list[str]:
+    """The escalation ids a user row names: ``escalation_id`` (one chip) or
+    ``escalation_ids`` (several chip replies drained as one row)."""
+    if not meta:
+        return []
+    out: list[str] = []
+    one = meta.get("escalation_id")
+    if isinstance(one, str) and one:
+        out.append(one)
+    many = meta.get("escalation_ids")
+    if isinstance(many, list):
+        out.extend(x for x in many if isinstance(x, str) and x and x not in out)
+    return out
+
+
+def _mark_member_escalations_answered(
+    slot_key: str,
+    on_changed: object | None = None,
+    *,
+    escalation_ids: list[str] | None = None,
+    persist: object | None = None,
+    row_ts: str = "",
+) -> None:
+    """Tell the conversation index that the human replied in *slot_key*.
+
+    The set of escalations pending at THIS moment is snapshotted here, on the
+    loop, from the index's in-memory view: the write runs a beat later, and an
+    escalation landing in between must not be counted by the free-text rule
+    (the transcript, which the chat projection reads, has the reply before
+    that card).
+
+    *persist* (``Callable[[], Awaitable[bool]]`` — the state installs a forced,
+    non-best-effort slot save) runs FIRST: the ``answered`` mark is derived from
+    the reply row, so the row has to be durable before the mark is. Marking
+    first would let a gateway exit before the periodic flush lose the reply
+    while the escalation stayed permanently answered; if the save does not
+    commit the mark is skipped (logged) and the record stays pending, which the
+    human's next reply — or a retry — resolves. Off the event loop when one is
+    running (the index may write a file), inline otherwise. When a record
+    actually moved, *on_changed* (the state's ``push_slots_update``) runs back
+    on the loop so the roster's ``needs_you`` clears with the reply instead of
+    at the next unrelated slots push. Never raises: the transcript row is
+    already appended and this is derived state.
+    """
+    from kiro_crew.members import DM_SLOT_KEY_PREFIX
+
+    if not slot_key.startswith(DM_SLOT_KEY_PREFIX):
+        return
+    slug = slot_key[len(DM_SLOT_KEY_PREFIX) :]
+
+    # circular import: crew_conversation imports members, which sits below this
+    # module in the layering (members -> artifacts -> validation).
+    from kiro_crew.crew_conversation import is_primed, mark_answered, parse_ts, pending_ids
+
+    # The reply is judged against each record's deadline AS OF THE REPLY ROW,
+    # not as of the write: the durable save this hook waits for can cross the
+    # deadline, and a timely reply must never be recorded as ``defaulted``
+    # because persistence was slow. The row's own timestamp is also what the
+    # record's ``answered_ts`` carries, matching the recovery replay.
+    reply_at = parse_ts(row_ts)
+
+    # The memory view is a fast path, not the truth: a slot restored before any
+    # roster read has no primed view, and "nothing cached" must not read as
+    # "nothing pending" — that would drop the reply's answer on the floor. An
+    # unprimed slug falls back to the records pending at write time (the file).
+    candidates: list[str] | None
+    if is_primed(slug):
+        try:
+            candidates = pending_ids(slug, now=reply_at)
+        except Exception:  # noqa: BLE001 - fall back to "whatever is pending at write time"
+            candidates = None
+        if candidates is not None and not candidates and not escalation_ids:
+            return  # nothing pending: an ordinary turn costs nothing here
+    else:
+        candidates = None
+
+    def _do() -> int:
+        try:
+            return mark_answered(
+                slug,
+                escalation_ids=escalation_ids or None,
+                candidates=candidates,
+                answered_ts=row_ts,
+                now=reply_at,
+            )
+        except Exception:  # noqa: BLE001 - derived state must never break an append
+            logger.debug("escalation answered-mark failed for %s", slug, exc_info=True)
+            return 0
+
+    def _notify() -> None:
+        if callable(on_changed):
+            try:
+                on_changed()
+            except Exception:  # noqa: BLE001 - sidebar refresh is best-effort
+                logger.debug("escalation answered: slots push failed", exc_info=True)
+
+    def _not_durable() -> None:
+        logger.warning(
+            "escalation answered-mark skipped for %s: the reply row did not persist", slug
+        )
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        if callable(persist):
+            try:
+                saved = asyncio.run(persist())  # no loop in this thread: run the save here
+            except Exception:  # noqa: BLE001 - a failed save is "not durable"
+                logger.debug("escalation answered: reply save failed", exc_info=True)
+                saved = False
+            if not saved:
+                _not_durable()
+                return
+        if _do():
+            _notify()
+        return
+
+    async def _persist_then_mark(predecessor: "asyncio.Task[None] | None") -> None:
+        # Wait for the PREVIOUS reply's persist+mark on this slot to finish, so
+        # marks settle in transcript order: a chip for A appended just before a
+        # typed reply must have marked A before the typed reply is judged,
+        # otherwise the typed reply (snapshotted with A and B both open) sees
+        # two pending, declines, and B stays behind a lit badge until the next
+        # reply. `mark_answered` re-reads the file, so once A's mark has landed
+        # the typed reply's candidates narrow to B on their own. A predecessor
+        # that failed or was cancelled is waited for and then ignored — its
+        # outcome is its own. The predecessor is captured by the CALLER, before
+        # this task is registered as the chain's head: `create_task` does not run
+        # the body synchronously, so a lookup in here would find this very task
+        # and await itself forever.
+        if predecessor is not None and not predecessor.done():
+            try:
+                await asyncio.shield(predecessor)
+            except BaseException:  # noqa: BLE001 - the predecessor's failure is not ours
+                pass
+        if callable(persist):
+            try:
+                saved = await persist()
+            except Exception:  # noqa: BLE001 - a failed save is "not durable"
+                logger.debug("escalation answered: reply save failed", exc_info=True)
+                saved = False
+            if not saved:
+                _not_durable()
+                return
+        try:
+            moved = await loop.run_in_executor(None, _do)
+        except RuntimeError:
+            # Loop closing between the append and the write (shutdown): the
+            # record stays pending; the next reply after restart answers it.
+            return
+        if moved:
+            _notify()
+
+    # Read the chain head BEFORE registering the new task as the head.
+    previous = _ESCALATION_MARK_CHAIN.get(slot_key)
+    try:
+        task = loop.create_task(_persist_then_mark(previous))
+    except RuntimeError:
+        logger.debug("escalation answered: loop closed before the mark could be scheduled")
+        return
+    _ESCALATION_MARK_CHAIN[slot_key] = task
+
+    def _forget(done: "asyncio.Task[None]") -> None:
+        # Drop the chain entry only if it is still THIS task; a successor has
+        # already replaced it otherwise.
+        if _ESCALATION_MARK_CHAIN.get(slot_key) is done:
+            _ESCALATION_MARK_CHAIN.pop(slot_key, None)
+
+    task.add_done_callback(_forget)
+
+
 def append_and_surface(
     state: "DashboardState",
     slot: "_ChatSlot",
@@ -3254,6 +3434,8 @@ class _ChatSlot:
         "_mcp_report_session_id",
         "_on_message",
         "_on_question_retired",
+        "_on_escalation_answered",
+        "_persist_for_escalation",
         "_has_reader_flag",
         "_stop_state_raw",
         "_stop_generation",
@@ -3366,6 +3548,8 @@ class _ChatSlot:
         "_pending_steers",
         "_steer_delivery_ids",
         "_steer_send_ids",
+        "_steer_escalation_ids",
+        "_steer_human_reply",
         "_wait_state",
         "_end_wait_request",
         "_wait_last_ping",
@@ -3565,6 +3749,8 @@ class _ChatSlot:
         # is invisible to a second window, and to a /pending response already in
         # flight — either would re-render a card whose answer has been sent.
         self._on_question_retired: object | None = None
+        self._on_escalation_answered: object | None = None  # Callable[[], None] | None
+        self._persist_for_escalation: object | None = None  # Callable[[], Awaitable[bool]] | None
         self._has_reader_flag: bool = False  # True when HTTP SSE stream is draining
         self._stop_state_raw: str = "idle"  # 'idle' | 'soft_pending' | 'killing'
         # Monotonic count of stop INITIATIONS (idle → active edges of
@@ -4027,6 +4213,8 @@ class _ChatSlot:
         # carries `meta.sendId` like an accepted steer's row does (#6751). A steer
         # that persists its own row stamps the id directly and drops this entry.
         self._steer_send_ids: dict[str, str] = {}
+        self._steer_escalation_ids: dict[str, str] = {}
+        self._steer_human_reply: set[str] = set()
         # In-flight `wait` tool sleep, as reported by the tool's own keepalive
         # ping: {"wait_id": str, "seconds": int, "deadline_ts": float}. The
         # deadline is on the dashboard's clock (see api_session_keepalive) so
@@ -4352,6 +4540,33 @@ class _ChatSlot:
         self.total_messages += 1
         self._dirty = True
         self._pending.append(msg)
+        # A human reply in a crew member's DM thread answers the escalation(s)
+        # that member has pending: the conversation index (not the slot) owns
+        # that state, so hand it the fact and let it decide whether a write is
+        # even needed. Runs AFTER the row is in the window because the index
+        # persists that row (``_persist_for_escalation``) before it marks
+        # anything answered. Live appends only — a replayed row answers nothing —
+        # and only rows the authenticated composer produced (``meta.human_reply``,
+        # stamped server-side by the chat handler and carried through the
+        # queue/steer paths): a peer's ``session_send`` row, a heartbeat or a
+        # cron ``prompt:`` into the member slot also land as ``user`` rows and
+        # none of them is the human. ``human_reply`` is the WHOLE test: a peer
+        # send never carries it (the stamp is the composer's, server-side), so
+        # a content-shape guard on top would only misfire on a human who
+        # happened to type the peer prefix and leave their answer unrecorded.
+        if (
+            role == "user"
+            and broadcast
+            and self.mode == "member"
+            and (meta or {}).get("human_reply") is True
+        ):
+            _mark_member_escalations_answered(
+                self.key,
+                self._on_escalation_answered,
+                escalation_ids=_row_escalation_ids(meta),
+                persist=self._persist_for_escalation,
+                row_ts=str(msg.get("ts") or ""),
+            )
         self.event.set()
         # Broadcast via global SSE when no HTTP stream reader is active
         # Skip: chunk (too noisy), done (internal). A "user" row is skipped by
@@ -6424,6 +6639,8 @@ class DashboardState:
         slot._tab_id = uuid.uuid4().hex[:12]
         slot._on_message = self._broadcast_chat_message
         slot._on_question_retired = self._broadcast_question_retired
+        slot._on_escalation_answered = self.push_slots_update
+        slot._persist_for_escalation = functools.partial(self._persist_slot_for_escalation, slot)
         slot._app = app
         # ``origin`` must be declared by the layer that actually knows it, and
         # an undeclared non-app slot stays UNTAGGED ("") rather than being
@@ -7677,6 +7894,16 @@ class DashboardState:
                             "original exception is chained below as __context__"
                         )
                     raise
+
+    async def _persist_slot_for_escalation(self, slot: "_ChatSlot") -> bool:
+        """Forced, non-best-effort save of a member slot — the durability step the
+        escalation answer rule runs before it marks a record ``answered`` (see
+        :func:`_mark_member_escalations_answered`). Returns whether the save
+        committed; a skipped or failed save is ``False`` and leaves the record
+        pending rather than answered-by-a-row-that-may-not-exist."""
+        from kiro_crew.dashboard.chat_persistence import save_slot_off_loop
+
+        return bool(await save_slot_off_loop(self, slot, force=True, best_effort=False))
 
     def push_slots_update(self) -> None:
         """Push slots, keeping provider status confined to owner websockets.

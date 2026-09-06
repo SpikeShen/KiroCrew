@@ -5957,6 +5957,14 @@
         "continue": "Continue",
         "continue_hint": "Resume from where it stopped. Work already written to disk is untouched."
       },
+      "escalationNotice": {
+        "deadline": "Reply by {{time}}; with no reply, nothing happens and the request stays open.",
+        "needs_you": "Needs you",
+        "options": "To answer, type one of these as a reply in this thread: {{list}}",
+        "reply_hint": "Reply in this thread to answer.",
+        "veto": "Unless you reply by {{time}}, {{member}} will: {{action}}",
+        "veto_generic": "Unless you reply by {{time}}, the member will: {{action}}"
+      },
       "knowledgePicker": {
         "cancel": "Cancel",
         "dismiss": "Dismiss",

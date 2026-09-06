@@ -20,7 +20,7 @@
  * contrast against.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Circle, Clock, ExternalLink, Pencil, UserPlus, Users, Webhook } from 'lucide-react'
 import { PanelRightSolid } from '../../components/icons/panels'
 import { useTranslation } from 'react-i18next'
@@ -390,6 +390,28 @@ export default function MembersPage() {
     [t],
   )
 
+  // Deep link: `/members?member=<crew name>` opens that member's thread once
+  // the roster has loaded, then strips the param. The escalation bell mirror
+  // (`_mirror_escalation`) emits exactly this URL, so the notification's
+  // "Open" lands on the thread that needs the human rather than on an
+  // unselected roster. Consumed ONCE (replace, not push): a later back or
+  // deselect must not re-pin the member, and an unknown name simply leaves
+  // the roster showing.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const wantedMember = searchParams.get('member') || ''
+  useEffect(() => {
+    if (!wantedMember || !loaded) return
+    const target = members.find((m) => m.name === wantedMember)
+    if (target) openMember(target)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete('member')
+        return next
+      },
+      { replace: true },
+    )
+  }, [wantedMember, loaded, members, openMember, setSearchParams])
   return (
     // pb-2 on the root is the one shared bottom inset: the card columns and
     // the detail drawer all end 8px above the window edge (the chat SidePanel's

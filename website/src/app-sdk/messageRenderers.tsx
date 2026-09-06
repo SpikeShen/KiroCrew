@@ -28,6 +28,7 @@ import { renderMcpOAuthMessage } from '../pages/chat/McpOAuthBanner'
 import SubagentCompletionCard from '../pages/chat/SubagentCompletionCard'
 import NudgeCard from '../pages/chat/NudgeCard'
 import NoticeCard from '../pages/chat/NoticeCard'
+import EscalationNotice from '../pages/chat/EscalationNotice'
 import { ErrorCard } from '../pages/chat/ErrorCard'
 import StopEventCard from '../pages/chat/StopEventCard'
 import { isSubagentCompletionMessage } from '../pages/chat/subagentCompletion'
@@ -352,6 +353,16 @@ export const defaultMessageRenderers: readonly MessageRenderer[] = [
     id: 'notice',
     roles: ['notice'],
     render: (m, ctx) => ctx.row(<NoticeCard content={m.content} />),
+  },
+  {
+    // A crew member's `session_escalate` card. Drawn on EVERY surface by
+    // default so the question the bell deep-links to is never invisible in the
+    // thread it landed in; the Crew Members chat profile replaces this entry
+    // with the interactive card (option chips, countdown, state) by claiming
+    // the role.
+    id: 'escalation',
+    roles: ['escalation'],
+    render: (m, ctx) => ctx.row(<EscalationNotice message={m} />),
   },
   {
     // Grouped and lifecycle-only roles have no row of their own: a thinking or

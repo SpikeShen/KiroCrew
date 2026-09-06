@@ -4796,6 +4796,18 @@ def _requeue_unconsumed_steers(state: "DashboardState", slot: "_ChatSlot") -> No
         _sid = getattr(slot, "_steer_send_ids", {}).pop(steer_msg, "")
         if _sid:
             _meta["sendId"] = _sid
+        # And the escalation record an option-chip reply names, for the same
+        # reason: the drained row is what the answer rule reads.
+        _eid = getattr(slot, "_steer_escalation_ids", {}).pop(steer_msg, "")
+        if _eid:
+            _meta["escalation_id"] = _eid
+        # The requeued row keeps exactly the provenance the handler validated
+        # for the original steer — recorded per message like the escalation id
+        # — so an internal caller's steer is never promoted to a human reply.
+        _hr = getattr(slot, "_steer_human_reply", None)
+        if _hr is not None and steer_msg in _hr:
+            _hr.discard(steer_msg)
+            _meta["human_reply"] = True
         # Provenance is derivable, not guessed: `steer_into_running_turn` has
         # exactly one caller (the api_chat composer branch), and app isolation
         # confines app-surface requests to app-scoped slots — so every steer
@@ -5078,6 +5090,64 @@ def _drop_stale_admissions(state: DashboardState, slot: _ChatSlot) -> None:
         )
 
 
+def _replay_merged_escalation_replies(
+    slot: _ChatSlot, replies: list[str | None], named: list[str]
+) -> list[str]:
+    """Resolve a MIXED merged batch of human replies (chips and typed text) to
+    the records it answers, in order.
+
+    *replies* is the human's entries in queue order — an escalation id for a
+    chip, ``None`` for typed text. Each chip answers its record and removes it
+    from what is pending; each typed reply answers the single record still
+    pending at its position, or nothing when zero or several remain (the same
+    free-text rule ``crew_conversation.mark_answered`` applies to a lone row).
+    Returns the ids in answer order, *named* first when the pending view is not
+    available.
+
+    The pending view is the index's in-memory snapshot taken on the loop
+    (``pending_ids``), the same source the live answer hook reads, so the
+    resolution and the hook agree on what was open. A slot that is not a
+    member's DM thread, an unprimed view or a read failure fall back to the
+    chips alone — the under-answering side, which leaves a badge the human's
+    next reply clears rather than answering a record with text meant for
+    another.
+    """
+    from kiro_crew.members import DM_SLOT_KEY_PREFIX
+
+    key = getattr(slot, "key", "") or ""
+    if not key.startswith(DM_SLOT_KEY_PREFIX):
+        return list(named)
+    # circular import: crew_conversation imports members, which sits below this
+    # module in the layering (members -> artifacts -> validation).
+    from kiro_crew.crew_conversation import is_primed, pending_ids
+
+    slug = key[len(DM_SLOT_KEY_PREFIX) :]
+    if not is_primed(slug):
+        return list(named)
+    try:
+        open_ids = set(pending_ids(slug))
+    except Exception:  # noqa: BLE001 - derived state; fall back to the chips alone
+        logger.debug("escalation merged-reply replay failed for %s", slug, exc_info=True)
+        return list(named)
+    resolved: list[str] = []
+    for item in replies:
+        if item is not None:
+            if item not in resolved:
+                resolved.append(item)
+            open_ids.discard(item)
+            continue
+        remaining = [i for i in open_ids if i not in resolved]
+        if len(remaining) == 1:
+            resolved.append(remaining[0])
+            open_ids.discard(remaining[0])
+    # A chip for a record no longer pending still names it (the index ignores
+    # an already-answered id); never drop a named id the human clicked.
+    for item in named:
+        if item not in resolved:
+            resolved.append(item)
+    return resolved
+
+
 async def _start_next_queued_turn(state: DashboardState, slot: _ChatSlot) -> bool:
     """Dequeue and start one ready Kiro turn, preserving queue semantics."""
 
@@ -5318,6 +5388,9 @@ async def _start_next_queued_turn(state: DashboardState, slot: _ChatSlot) -> boo
     # one) keeps the plain-send shape -- `sendId` alone -- so a client reading
     # only that key sees exactly what a dispatched send's row carries.
     _drained_send_ids: list[str] = []
+    _drained_escalation_ids: list[str] = []
+    _drained_human_replies: list[str | None] = []
+    _drained_all_human = True
     # circular import: session_control imports this package's modules at module level.
     from kiro_crew.dashboard.session_control import (
         QUEUED_CONTAINMENT_META_KEY,
@@ -5349,12 +5422,40 @@ async def _start_next_queued_turn(state: DashboardState, slot: _ChatSlot) -> boo
             _sid = _item_meta.get("sendId")
             if isinstance(_sid, str) and _sid and _sid not in _drained_send_ids:
                 _drained_send_ids.append(_sid)
+            # Escalation replies accumulate for the same reason steer ids do:
+            # two option chips answered while the member was busy become ONE
+            # drained row, and last-wins merging would lose the first answer.
+            # Only an entry that is ITSELF the human's (``human_reply``) may
+            # contribute an id: a non-owner's chip merged with the owner's text
+            # must not ride out on an owner-marked row and answer a record the
+            # owner never touched.
+            _item_human = _item_meta.get("human_reply") is True
+            _esc = _item_meta.get("escalation_id")
+            if (
+                _item_human
+                and isinstance(_esc, str)
+                and _esc
+                and _esc not in _drained_escalation_ids
+            ):
+                _drained_escalation_ids.append(_esc)
+            if _item_human:
+                # The human's replies IN ORDER: a chip names its record, typed
+                # text (None) names nothing and is resolved below against what
+                # was still pending at its position in the batch.
+                _drained_human_replies.append(_esc if isinstance(_esc, str) and _esc else None)
+            if not _item_human:
+                _drained_all_human = False
             # The admission-time containment snapshot (#5911) is queue plumbing,
             # consumed by _drop_stale_admissions above; it says nothing about the
             # ROW, so it must not ride into the persisted transcript meta.
+            # ``human_reply`` is decided for the merged row as a whole below.
             _drained_meta.update(
-                (k, v) for k, v in _item_meta.items() if k != QUEUED_CONTAINMENT_META_KEY
+                (k, v)
+                for k, v in _item_meta.items()
+                if k not in (QUEUED_CONTAINMENT_META_KEY, "escalation_id", "human_reply")
             )
+        else:
+            _drained_all_human = False
     if _drained_ids:
         _drained_meta.pop("steer_delivery_id", None)
         _drained_meta["steer_delivery_ids"] = _drained_ids
@@ -5364,6 +5465,30 @@ async def _start_next_queued_turn(state: DashboardState, slot: _ChatSlot) -> boo
         # send the row stands for. Membership in `sendIds` is the proof a client
         # should read on a merged row; on a plain row `sendId` is the whole story.
         _drained_meta["sendIds"] = _drained_send_ids
+    # A merged row is the human's reply only if EVERY merged entry was: one
+    # automated or non-owner entry in the batch and the row answers nothing.
+    if consumed and _drained_all_human:
+        _drained_meta["human_reply"] = True
+        # A MIXED batch — at least one chip and at least one typed reply merged
+        # into this row — is replayed in order here, where the order is still
+        # known, against what the member had pending: a chip answers its record
+        # and takes it off the table, typed text answers the record only if
+        # exactly one is left at its position (the free-text rule), else
+        # nothing. The row then NAMES every record the sequence answered, so
+        # the index, the recovery replay and the chat projection all apply
+        # their unchanged named-id rule and agree. Without this, "chip for A,
+        # then text" merged into one row answered A alone and left B pending
+        # behind a lit badge, while the same two replies drained separately
+        # would have answered both. Pure-chip and pure-text batches are
+        # unchanged: they never had an order problem.
+        if None in _drained_human_replies and _drained_escalation_ids:
+            _drained_escalation_ids = _replay_merged_escalation_replies(
+                slot, _drained_human_replies, _drained_escalation_ids
+            )
+    if len(_drained_escalation_ids) == 1:
+        _drained_meta["escalation_id"] = _drained_escalation_ids[0]
+    elif _drained_escalation_ids:
+        _drained_meta["escalation_ids"] = _drained_escalation_ids
     # Durable provenance for every `inject` row. `cls` is NOT persisted for this
     # role (chat_persistence only keeps it for `role == "system"`), and the
     # frontend's `meta.cronLabel` exists on the wire only because parse_cls_meta

@@ -24,6 +24,7 @@ import logging
 from aiohttp import web
 
 import kiro_crew.dashboard.handlers as _h
+from kiro_crew import crew_conversation
 from kiro_crew import members as members_mod
 from kiro_crew.config.loader import KiroCrewConfig
 from kiro_crew.dashboard.chat_persistence import rehydrate_slot_from_history_async
@@ -38,6 +39,33 @@ logger = logging.getLogger(__name__)
 #: scan alike; the log itself rotates at ~256KiB so this is a display cap,
 #: not a durability boundary.
 _ACTIVITY_LIMIT = 50
+
+#: Per member: the transcript GENERATION the conversation index was last
+#: reconciled against (see ``crew_conversation.reconcile_with_transcript``) with
+#: nothing deferred — the persisted transcript's mtime plus the live window's
+#: length. Recovery is keyed to the transcript, not to the process: a rewind or
+#: any other rewrite that removes an escalation row changes the generation, so
+#: the index is re-derived on the next read instead of a stale ``needs_you``
+#: surviving for the process lifetime. The re-derivation runs whenever the
+#: generation moved, pending or not: a rewind that drops the reply which
+#: ANSWERED a record (its card staying) must reopen that record, which is a
+#: change with nothing pending beforehand. A member with a deferred
+#: (in-flight-grace) record is not recorded, so it is reconciled again on the
+#: next roster read.
+_RECONCILED: dict[str, tuple[float, int]] = {}
+
+
+def _without_human_reply(row: dict) -> dict:
+    """A shallow copy of a LIVE (unflushed) transcript row with the human's
+    reply provenance removed, so recovery reconciliation cannot settle an
+    escalation on the strength of a reply that is not yet on disk. Rows that
+    carry no ``human_reply`` are returned as-is; the caller's row is never
+    mutated (it is the slot's live window)."""
+    meta = row.get("meta")
+    if not isinstance(meta, dict) or "human_reply" not in meta:
+        return row
+    stripped = {k: v for k, v in meta.items() if k != "human_reply"}
+    return {**row, "meta": stripped}
 
 
 def _parse_activity_ts(raw: str) -> float:
@@ -219,7 +247,121 @@ async def api_members(request: web.Request) -> web.Response:
         row["last_active_ts"] = mt
         row["last_message"] = preview
 
+    # Pending escalations, derived from each member's conversation index —
+    # one thread hop for the roster, same shape as the binding reads. The
+    # index is UI state (not the trust binding), so an unreadable file reads
+    # as "nothing pending" rather than failing the roster. The same hop primes
+    # the in-memory view the slots projection reads on the event loop, so a
+    # member whose escalations predate this gateway process gets its badge on
+    # the first roster load rather than on its next write.
+    #
+    # Recovery runs here too: the index is a projection of the transcript, so
+    # before a member's pending count is trusted the projection is re-derived
+    # from the transcript (``reconcile_with_transcript``) — orphans (a card row
+    # the transcript never got) are retracted, durable human replies the live
+    # hook never recorded are applied. The rows are the PERSISTED transcript's
+    # (the restored live window is only a tail of it) followed by any live rows
+    # not yet flushed. A member is marked reconciled for this process only when
+    # nothing was deferred: a record still inside the in-flight grace is looked
+    # at again on the next read rather than kept pending forever. There is no
+    # "nothing pending, skip" short-cut: a rewind can remove the reply that
+    # ANSWERED a record while its card stays, and reconciliation must reopen
+    # it — so a transcript change can move the index even with nothing pending.
+    # The generation check below (a stat, not a read) is what keeps a quiet
+    # member cheap.
+    to_reconcile: dict[str, tuple[str, list[dict], int]] = {}
+    for row in rows:
+        if state is None or not row["slot_key"]:
+            continue
+        live = state._slots.get(row["slot_key"])
+        live_rows = list(live.messages) if live else []
+        to_reconcile[row["slug"]] = (row["slot_key"], live_rows, len(live_rows))
+
+    def _read_escalations() -> dict[str, int]:
+        out: dict[str, int] = {}
+        # `to_reconcile` is only populated when `state` is set, so the log is
+        # never None for a job that exists; bound here for the type checker.
+        log = state.conversation_log if state is not None else None
+        for row in rows:
+            try:
+                crew_conversation.prime(row["slug"])
+                job = to_reconcile.get(row["slug"])
+                if job is not None and log is not None:
+                    slot_key, live_rows, live_len = job
+                    log_key = f"dashboard:{slot_key}"
+                    generation = (log.session_mtime(log_key) or 0.0, live_len)
+                    if _RECONCILED.get(row["slug"]) == generation and not (
+                        crew_conversation.index_unreadable(row["slug"])
+                    ):
+                        job = None  # same transcript as last time: nothing to re-derive
+                if job is not None and log is not None:
+                    persisted = log.read_messages_chained_full(log_key)
+                    seen = {
+                        (m.get("meta") or {}).get("mid")
+                        for m in persisted
+                        if isinstance(m.get("meta"), dict)
+                    }
+                    # Live rows not yet flushed still count for CARD PRESENCE
+                    # (a fresh escalation's row lives only in the window until
+                    # the next flush, and must not read as an orphan) but must
+                    # NOT settle a record: the live hook marks a reply answered
+                    # only after a forced save committed the row, and folding an
+                    # unpersisted reply in here would settle the record on disk
+                    # first — a gateway exit before the flush then restores an
+                    # answered index with no reply in the transcript. Strip the
+                    # human's provenance from the live copies so only persisted
+                    # replies answer; the next flush makes them persisted and the
+                    # generation change re-derives.
+                    transcript = list(persisted) + [
+                        _without_human_reply(m)
+                        for m in live_rows
+                        if not (isinstance(m.get("meta"), dict) and m["meta"].get("mid") in seen)
+                    ]
+                    outcome = crew_conversation.reconcile_with_transcript(
+                        row["slug"],
+                        transcript,
+                        session_key=slot_key,
+                        member=str(row.get("name") or ""),
+                    )
+                    if not outcome["deferred"]:
+                        _RECONCILED[row["slug"]] = generation
+                record = crew_conversation.read_conversation(row["slug"])
+                out[row["slug"]] = len(crew_conversation.pending_escalations(record))
+            except Exception:  # noqa: BLE001 - derived state never fails the roster
+                out[row["slug"]] = 0
+        return out
+
+    pending = await asyncio.to_thread(_read_escalations)
+    for row in rows:
+        count = pending.get(row["slug"], 0) if row["slot_key"] else 0
+        row["pending_escalations"] = count
+        row["needs_you"] = count > 0
+
     return web.json_response({"members": rows})
+
+
+async def api_member_conversation(request: web.Request) -> web.Response:
+    """GET /api/members/{slug}/conversation — the member's thin conversation index.
+
+    Pointers and escalation lifecycle only; bodies live in the referenced
+    session transcripts. ``needs_you`` and ``pending_escalations`` are derived
+    on read (a passed deadline reads as ``defaulted``/``expired`` without a
+    write). Owner-only, like the thread endpoint: the index names sessions.
+    """
+    denied = await _deny_app_caller(request, "members.conversation")
+    if denied is not None:
+        return denied
+    refused = await require_owner_dashboard_request(request, "members.conversation")
+    if refused is not None:
+        return refused
+    try:
+        slug = members_mod.validate_slug(request.match_info.get("slug", ""))
+    except members_mod.MemberSlugError:
+        return web.json_response(
+            {"error": "invalid member slug", "code": "invalid_member_slug"}, status=400
+        )
+    record = await asyncio.to_thread(crew_conversation.read_conversation, slug)
+    return web.json_response(crew_conversation.public_view(record))
 
 
 async def api_member_thread(request: web.Request) -> web.Response:
@@ -230,8 +372,6 @@ async def api_member_thread(request: web.Request) -> web.Response:
     re-created (the slot key is a pure derivation of the slug, so re-creation
     always converges on the same thread).
     """
-    from kiro_crew.dashboard.handlers._shared import require_owner_dashboard_request
-
     denied = await _deny_app_caller(request, "members.thread")
     if denied is not None:
         return denied

@@ -88,6 +88,7 @@ from kiro_crew.validation import (
     MCP_DASHBOARD_SCHEMAS,
     SESSION_CLOSE_SCHEMA,
     SESSION_CREATE_SCHEMA,
+    SESSION_ESCALATE_SCHEMA,
     SESSION_READ_MESSAGE_SCHEMA,
     SESSION_SEND_SCHEMA,
     SESSION_STOP_SCHEMA,
@@ -110,6 +111,7 @@ SESSION_CONTROL_TOOLS: tuple[str, ...] = (
     "session_stop",
     "session_close",
     "session_send",
+    "session_escalate",
     "session_read_message",
 )
 
@@ -340,6 +342,74 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     },
                 },
                 "required": ["target", "message"],
+            },
+        },
+        {
+            "name": "session_escalate",
+            "description": (
+                "Raise something to the HUMAN who owns you, as a peer, and keep "
+                "working — it never blocks. The message lands in your Crew Members "
+                "DM thread as an escalation card (in your own transcript if no member "
+                "owns you) and rings the bell; nothing runs a turn. Use it when you "
+                "hit a wall: a permission you lack, something only a person can reach, "
+                "a one-way door. Write it for a reader with zero context — one line of "
+                "background, what you tried, and the concrete action you need from "
+                "them. When you can proceed on a sensible default, say so: pass "
+                'deadline (e.g. "30m", "2h", or ISO-8601) and default_action — '
+                '"unless you stop me by then, I do X" — and carry on when the window '
+                "closes. The promise is yours to keep: nothing wakes you at the "
+                "deadline, so if your turn may end before it, schedule your own wake "
+                "(a monitor loop or a one-shot job) — the record will read "
+                "'defaulted' whether or not you actually acted. When the answer is a "
+                "choice, offer up to 6 short options; the "
+                "human's reply is one of them, or free text. Their reply arrives later "
+                "as an ordinary user message in that thread — do not wait for it.\n\n"
+                "Escalation is NOT approval: anything the person must actively grant "
+                "(metric or objective definitions, budgets, your own continuation) "
+                "does not go through here. To make another SESSION act, use "
+                "session_send; to block your own turn on a human answer, use "
+                "ask_question."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": (
+                            "Markdown body of the escalation: background / what you "
+                            "tried / what you need."
+                        ),
+                    },
+                    "deadline": {
+                        "type": "string",
+                        "description": (
+                            'Veto window: a duration ("30m", "2h", "1d") or ISO-8601 '
+                            "time, 1 minute to 7 days out. Pair it with default_action."
+                        ),
+                    },
+                    "default_action": {
+                        "type": "string",
+                        "description": (
+                            "What you will do if the window closes unanswered (max 500 chars)."
+                        ),
+                    },
+                    "options": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Up to 6 short choices (max 120 chars each) when the answer "
+                            "is a pick; the human's reply is the chosen text, or free text."
+                        ),
+                    },
+                    "goal": {
+                        "type": "string",
+                        "description": (
+                            "The goal or thread this belongs to; escalations on one goal "
+                            "fold together in the DM thread and stack in the bell."
+                        ),
+                    },
+                },
+                "required": ["message"],
             },
         },
         {
@@ -1023,6 +1093,40 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         return (
             f"\U0001f4e8 Queued for `{target}` — it is mid-turn, so your message runs "
             "when the current turn ends. Poll with session_read_message."
+        )
+
+    if name == "session_escalate":
+        args = validate_tool_args(args, SESSION_ESCALATE_SCHEMA)
+        esc_payload: dict[str, Any] = {"message": args["message"]}
+        for key in ("deadline", "default_action", "options", "goal"):
+            if args.get(key):
+                esc_payload[key] = args[key]
+        resp = _post(
+            "/api/session-control/escalate",
+            esc_payload,
+            session_key=caller_key,
+        )
+        if resp.get("error"):
+            return f"Error: could not escalate to the human: {resp['error']}"
+        target = resp.get("target", "")
+        window = (
+            f" The veto window closes at {resp['deadline']}; carry on with your "
+            "default action if nothing comes back by then. Nothing wakes you at the "
+            "deadline — if your turn may end first, schedule your own wake."
+            if resp.get("deadline")
+            else ""
+        )
+        if resp.get("reply_in_caller_thread", True):
+            where = "Their reply, if any, arrives here as an ordinary user message."
+        else:
+            where = (
+                f"Their reply, if any, lands in `{target}` — the member that owns you — "
+                "and reaches you only if that member relays it; do not wait on it."
+            )
+        return (
+            f"\U0001f4e8 Escalated to the human in `{target}` "
+            f"(id {resp.get('escalation_id', '')}). This does not block: keep working."
+            f"{window} {where}"
         )
 
     if name == "session_read_message":

@@ -55,6 +55,15 @@ _INBOX_POLL_SECS = 1.0
 # only cancels and read only exfiltrates, but send delivers text that the target
 # session RUNS as a turn — so external channel content would execute inside a
 # private dashboard conversation.
+# ESCALATE runs nothing, so SEND's reasoning does not carry over; it is blocked
+# on send_notification's grounds instead: the card is mirrored onto the
+# notification bus (bell badge and sound), which is exactly the reach-the-user
+# path this list closes, and its row lands in a transcript the channel agent's
+# own conversation is not. The backend agrees -- a channel-linked or mirrored
+# caller is refused by ``_authorize_escalation_caller`` (``linked_session_caller``
+# / ``mirrored_caller``) -- so opening escalation to channel agents is a
+# deliberate two-site change (this entry plus that gate), not an accident of
+# a shared name.
 # Matched against the rendered
 # permission-request text/title via _blocked_tool_named() (boundary-aware,
 # not naive substring — "Editing send_notification.py" must NOT match).
@@ -63,6 +72,7 @@ CHANNEL_AGENT_BLOCKED_TOOLS: tuple[str, ...] = (
     "send_notification",
     "session_stop",
     "session_send",
+    "session_escalate",
     "session_read_message",
     "session_create",
     "session_close",

@@ -52,6 +52,20 @@ describe('deriveFollowUpOptions', () => {
     expect(deriveFollowUpOptions(msgs, false).followUpOptions).toEqual([])
   })
 
+  // A crew member's escalation card (`session_escalate`) lands as its own row. It must
+  // END the scan: left transparent, the bar re-offered the PREVIOUS turn's chips, and a
+  // click posted a live user row the backend read as the escalation's answer.
+  it('offers nothing once an escalation row is the latest turn', () => {
+    const escalation: ChatMessage = {
+      role: 'escalation', content: '## Blocked on prod access', cls: 'msg msg-escalation',
+      meta: { kind: 'escalation', escalation_id: 'esc-1', options: ['Push A', 'Hold'], state: 'pending' },
+    }
+    const out = deriveFollowUpOptions([user('go'), assistant(OPTIONS_MSG), escalation], false)
+    expect(out).toEqual({ followUpOptions: [], followUpIsPlan: false, followUpSourceKey: null })
+    // Its own `meta.options` never leak into this bar either: they are the card's.
+    expect(out.followUpOptions).not.toContain('Push A')
+  })
+
   // Regression: an auto-compaction notice is appended as an assistant-role
   // message AFTER the options-bearing turn. It must not shadow those options.
   it('keeps options when a compaction notice (live kind) follows the options turn', () => {

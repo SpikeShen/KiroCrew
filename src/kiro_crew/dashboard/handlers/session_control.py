@@ -197,6 +197,41 @@ async def api_session_control_send(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def api_session_control_escalate(request: web.Request) -> web.Response:
+    """POST /api/session-control/escalate — raise something to the human who
+    owns the caller, as a peer (``session_escalate``).
+
+    Its own route, not a reserved target of ``/send``: the human is not a
+    session, nothing runs a turn, and a separate route is what lets the caller
+    gates and the containment policy classify the verb on its own.
+    """
+    refused = await _require_internal(request)
+    if refused is not None:
+        return refused
+    # No prewarm here: `escalate_to_user` warms the config after its own SEL
+    # prewarm, the same ordering `send_to_target` uses and for the same reason.
+    state: DashboardState = request.app["state"]
+    try:
+        body = await _body(request)
+        message = body.get("message")
+        if not isinstance(message, str) or not message.strip():
+            raise sc.SessionControlError("message is required", code="message_required")
+        result = await sc.escalate_to_user(
+            state,
+            caller_session_key=_read_session_key(request),
+            message=message,
+            # Shapes are validated inside ``escalate_to_user`` — this handler is
+            # internal-secret gated, so the check lives with the semantics.
+            deadline=body.get("deadline"),
+            default_action=body.get("default_action"),
+            options=body.get("options"),
+            goal=body.get("goal"),
+        )
+    except sc.SessionControlError as exc:
+        return _refusal(exc)
+    return web.json_response(result)
+
+
 async def api_session_control_read(request: web.Request) -> web.Response:
     """GET /api/session-control/read — read another session's transcript tail."""
     refused = await _require_internal(request)

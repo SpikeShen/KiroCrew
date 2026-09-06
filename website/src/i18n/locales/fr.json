@@ -9089,6 +9089,14 @@
         "continue": "Reprendre",
         "continue_hint": "Reprendre là où ça s’est arrêté. Le travail déjà écrit sur le disque reste intact."
       },
+      "escalationNotice": {
+        "deadline": "Répondez avant {{time}} ; sans réponse, rien ne se passe et la demande reste ouverte.",
+        "needs_you": "A besoin de vous",
+        "options": "Pour répondre, tapez l'une de ces options en réponse dans ce fil : {{list}}",
+        "reply_hint": "Répondez dans ce fil pour donner votre réponse.",
+        "veto": "Sans réponse de votre part avant {{time}}, {{member}} fera : {{action}}",
+        "veto_generic": "Sans réponse de votre part avant {{time}}, le membre fera : {{action}}"
+      },
       "folderPanel": {
         "clear_search": "Effacer la recherche",
         "empty_folder": "Dossier vide",

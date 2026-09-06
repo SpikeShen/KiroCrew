@@ -20,6 +20,7 @@ unreachable in production because the caller's `X-Internal-Secret` is ignored.
 | `session_stop` | `POST /api/session-control/stop` | Stop another session's in-flight turn |
 | `session_close` | `POST /api/session-control/close` | Close (archive) another session, as the tab ✕ does — heavier than stop, and recoverable rather than a delete |
 | `session_send` | `POST /api/session-control/send` | Deliver a message that another session runs as its next turn |
+| `session_escalate` | `POST /api/session-control/escalate` | Raise something to the human who owns the caller, as a peer — a card in the owning member's DM thread, no turn started (see below) |
 | `session_read_message` | `GET /api/session-control/read` | Read another session's transcript tail + liveness |
 
 **One verb here writes into another session's conversation: `session_send`.**
@@ -226,10 +227,12 @@ injection would strip a member thread of its tools mid-conversation. On the
 KAS backend the wire agent projection additionally grants the server in
 `tools` plus the member's approval-free dashboard verbs in `allowedTools`
 (ceiling-filtered like every other grant): `_MEMBER_DASHBOARD_GRANTS`, the
-conductor's read/create set plus `session_send` and `session_stop` — the
+conductor's read/create set plus `session_send`, `session_stop` and
+`session_escalate` — the
 write verbs are safe to auto-approve for a member *specifically* because the
 `created_by` ownership fence above bounds them to worker sessions the member
-itself opened. Member sessions also bypass the provider warm pool
+itself opened, and the escalation verb because it writes only into the member's
+own thread. Member sessions also bypass the provider warm pool
 (`bypass_member`): a pooled child was spawned with no session key on the
 default backend, so a warm hit would skip both the member backend route and
 the mount. The member backend is `agent.member_acp_backend` (default `kas`),
@@ -513,6 +516,251 @@ identity not presence" discipline `create_session` uses for its slot allocation,
 and the same theme as the queued-drain re-check (#5911). The human ✕ path passes
 no check — the person owns the tab and closes it unconditionally.
 
+## Escalating to the human (`session_escalate`)
+
+The human is addressable as a peer, through a verb of its own. `session_escalate`
+does not start a turn anywhere; it lands one `escalation` row in the DM thread of
+the crew member that owns the caller, rings the bell, and returns. Where the card
+lands is fixed by who is calling:
+
+| Caller | Lands in | Member index touched |
+|--------|----------|----------------------|
+| A member DM slot (`member-<slug>`) | its own thread | yes |
+| A worker session a member created (`_created_by` is a member slot) | the **creating member's** thread | yes |
+| Any other session | its own transcript | no |
+
+It is deliberately **not** a reserved `target` of `session_send`. The two differ
+in kind — a send delivers text the target session *runs as a turn*; an
+escalation writes a row and runs nothing — and a shared name would have merged
+two parameter sets into one schema (four fields silently dead unless `target`
+happened to be one literal) and, worse, made their policy inseparable: every
+site that classifies tools keys on the **name**. Each of those sites therefore
+names `session_escalate` on its own, and the decision recorded at each is:
+
+| Site | Decision | Why |
+|------|----------|-----|
+| `SESSION_CONTROL_TOOLS` (`mcp_dashboard.py`) | in | the caller's verified identity is the authorization, as for every other verb here |
+| `CHANNEL_AGENT_BLOCKED_TOOLS` (`channel.py`) | **blocked** | not on `session_send`'s grounds (nothing runs) but on `send_notification`'s: the card is mirrored onto the notification bus, which is exactly the reach-the-user path that list closes, and its row lands in a transcript the channel agent's own conversation is not. The backend agrees — a channel-linked or mirrored caller is refused (`linked_session_caller` / `mirrored_caller`). Letting a channel agent ask its human is a two-site change (this entry plus that gate), made on purpose or not at all |
+| `_MEMBER_DASHBOARD_GRANTS` (`agent.py`) | granted | it runs nothing and writes only into the member's own thread, and a member that hits a wall mid-turn with nobody at the keyboard is the case the verb exists for; the conductors keep it mounted-but-gated like every other write |
+| `MCP_DASHBOARD_SCHEMAS` / the registration pin | own schema (`message`, `deadline?`, `default_action?`, `options?`, `goal?`, no `target`) | `session_send` is back to `target` + `message`; an escalation field on it is refused as an unknown field, never dropped |
+
+A session may be titled `user`; nothing here consults titles, so there is no
+collision to refuse.
+
+The human is not a slot, so none of the *target* gates apply — but every
+*caller* gate of `authorize_target` does, in the same order and with the same
+codes (`caller_unidentified`, `session_control_disabled` with the member
+bypass, `unattended_caller`, `caller_gone`, `app_scoped_caller`,
+`ephemeral_caller`, `linked_session_caller`, `mirrored_caller`): an escalation
+is still a session reaching outside its own transcript. For a worker the
+result says `reply_in_caller_thread: false` — the human answers in the
+member's thread, and the worker learns of it only if the member relays it
+(the member is the actor that owns the worker, not the human).
+
+The row is `role: escalation`, `cls: msg msg-escalation`, content the caller's
+markdown (one line of background, what was tried, what is needed — the tool
+description asks for exactly that shape), and `meta`:
+`{kind: "escalation", escalation_id, from_session, deadline, default_action,
+options, goal, state: "pending", created_ts, mid}`. `deadline` is normalised to
+an absolute ISO timestamp from a duration (`30m`, `2h`, `1d`) or an ISO input
+and must fall 1 minute to 7 days out; `options` is at most six de-duplicated
+strings of at most 120 characters; `default_action` and `goal` are at most 500.
+Every field is sanitised with the same `sanitize_outbound` the peer path uses,
+because the text crosses from one session into a transcript the human reads.
+An invalid field is refused (`400`, `deadline_invalid` / `options_too_many` /
+…) before anything is appended.
+
+**`options` and the two other choice surfaces.** Three mechanisms put a choice
+in front of the human, and they must not answer each other:
+
+1. The `[OPTIONS: a | b]` trailing marker on an assistant turn, parsed into
+   follow-up pills by `deriveFollowUpOptions` (`website/src/app-sdk/protocol/options.ts`).
+2. The `ask_question` card (`questionPending`), which belongs to the **local**
+   session's own turn.
+3. Escalation `options`, carried on the row's `meta.options` and the index
+   record.
+
+The rules: an `escalation` row **ends** the pill scan — it offers no pills and,
+crucially, does not let the scan walk past it to a previous turn's marker, which
+is how a stale chip could otherwise post as a live `user` row that the one-pending
+rule below reads as the answer to an escalation it never matched. The row is
+**claimed by the default renderer registry** (`EscalationNotice`, `pages/chat`),
+so every surface that shows the thread — the Crew Members thread the bell
+deep-links to is a `ChatPane` — draws the question: the member's markdown, the
+veto window **in words** ("Unless you reply by <local time>, the member will:
+<action>"), the offered options as **readable text**, and how to answer (type in
+the thread). The interactive card (option chips, live countdown, state badge —
+`chatProfileRenderers` / `EscalationCard`, #8614) replaces that entry by claiming
+the role and answers with `meta.escalation_id`; until it lands the human answers
+by typing (the free-text rule). The bell mirror's body says the same things in
+the same words (a UTC clock time, no glyphs). The tool description promises
+exactly that and nothing more.
+An `ask_question` card is resolved through its own endpoint and writes **no**
+transcript row, so answering it never answers an escalation, and an escalation
+arriving while a card is open changes nothing about the card: the card holds
+the local turn, the escalation is a row from another session, and each is
+answered on its own surface. (The card's 404 fallback — resending the answer as
+an ordinary composer message — is an ordinary `user` row and follows the
+free-text rule like any other typed message.)
+
+A member's escalation is also recorded on that member's **conversation index**
+(see [crew-conversation.md](crew-conversation.md)): a pending record pointing
+at `(session_key, mid)`, written *before* the card is surfaced under a
+pre-minted row id so a reply can never race the record. `needs_you` —
+projected on the member slot's `slots` frame and on the `GET /api/members`
+roster row — is *derived* from the pending records, never stored on the slot.
+
+Which reply answers which record is one rule, applied identically by the
+index (`mark_answered`) and by the chat projection that draws the card:
+
+- a live `user` row carrying `meta.escalation_id` (an option chip) answers
+  exactly that record — the id rides the busy paths too (a queue entry's meta,
+  a steer row's meta), because a member that just escalated is usually
+  mid-turn when the human answers; when the queue drain merges several
+  entries into one row, only an entry that is *itself* the human's
+  (`human_reply`) contributes its id (`escalation_ids`), and the merged row is
+  the human's only if **every** merged entry was — one automated or non-owner
+  entry in the batch and the row answers nothing; a **mixed** batch (chips and
+  typed text) is replayed **in order** at the drain, where the order is still
+  known, against the pending view — a chip answers its record and takes it
+  off the table, typed text answers the single record left at its position or
+  nothing — and the row then *names* every record the sequence answered, so
+  the index, the recovery replay and the projection all apply their unchanged
+  named-id rule (with no pending view available the row names the chips
+  alone: the under-answering side);
+- a live `user` row without one (typed text) answers the pending record only
+  when **exactly one** was pending *at the moment the row was appended* — the
+  hook snapshots that set from the index's in-memory view on the event loop,
+  so a record landing on the executor a beat later is neither counted nor
+  answered, and the index agrees with transcript order; with none or several
+  pending it answers nothing, so an unrelated message cannot silently retire N
+  open decisions;
+- a record whose deadline has passed is swept to `defaulted` (a
+  `default_action` was declared) or `expired` first and is never answered
+  late — judged against the **reply row's own timestamp**, not the moment of
+  the index write, so a timely reply whose durable save crosses the deadline
+  still answers (and `answered_ts` is the row's); a replayed row (fork,
+  rotation, transfer) answers nothing; only a row
+  the **authenticated composer** produced answers at all — the chat handler
+  stamps `meta.human_reply` server-side only on the auth layer's positive
+  `is_dashboard_user` signal (a validated dashboard credential; app tokens,
+  derived internal callers and the internal secret never qualify — a falsy
+  `app` claim is not trust) **and** the owner identity
+  (`is_owner_dashboard_request`: the member's DM thread is the owner's
+  conversation, so a non-owner dashboard user who can post there is not the
+  human the escalation was raised to), never trusted from the client, and carries it
+  through the queue, steer and requeue paths, so a peer's `session_send` row,
+  a heartbeat, a cron `prompt:` or an internal caller posting into the member
+  slot, which all land as `user` rows, never answer.
+
+The index record is written *before* the card under a pre-minted row id, and
+the write is load-bearing: if it fails the escalation is refused
+(`escalation_index_unavailable`, 500) rather than delivered without a
+lifecycle. The index also holds a **ceiling on open decisions per member**
+(`MAX_PENDING_ESCALATIONS`, 50): pending records are never evicted by the file's
+size cap, so a member escalating in a loop with nobody answering is refused at
+the ceiling (`escalation_backlog_full`, 429) — atomically under the slug lock,
+before any row exists, with the count in the message — and told to wait for
+answers or report to its owner. Only genuinely open records count: a passed
+deadline is swept first and an answered record frees a slot. The card row is
+then appended and surfaced like any other row and
+persisted by the slot's ordinary flush — there is no forced save and no
+rollback on this path. If the thread closes, the caller loses eligibility, or
+the worker changes workspace across the index await, the record is retracted
+and the call refused (`target_gone`, 409); if the append itself fails, the
+record is retracted. A worker whose creating member's thread is in another
+workspace is refused up front (`workspace_mismatch`), the same boundary the
+peer path holds.
+
+**Recovery: reconcile with the transcript on restore.** Consistency between
+the index and the transcript runs in one direction — the transcript is the
+truth, the index a thin projection of it — so on restore the projection is
+re-derived from the transcript, both ways. An index file that exists but cannot
+be read (a torn write, a hand edit, the wrong shape) is not an empty index:
+writers refuse to overwrite it (`IndexUnreadable`; an escalation is refused as
+`escalation_index_unavailable`, a live answer-mark is skipped and logged), the
+roster forces a reconciliation regardless of the transcript's generation, and
+the reconciliation **rebuilds** every card row the transcript holds as a real
+pending record from the row's own meta before replaying replies and sweeping
+deadlines — the file is repaired from the truth rather than replaced by a blank. Before a member's pending count is
+trusted, each roster read in a gateway process hands the transcript in order
+(the persisted rows — including the rotated archive, since the restored live
+window is only a tail — followed by live rows not yet flushed, which count for
+**card presence only**: their `human_reply` provenance is stripped before the
+replay, because settling a record on the strength of a reply that is not yet on
+disk would let a gateway exit before the flush restore an answered index with
+no reply in the transcript; the live hook, which persists first, is what
+answers a live reply) to
+`crew_conversation.reconcile_with_transcript`: a pending record older than
+`ORPHAN_GRACE_SECS` (120 s) whose card row is absent (the gateway exited
+between the index write and the slot's flush) moves to `retracted`
+(`retracted_reason: orphan`); a pending record whose card row is present and
+that a later `user` row with `meta.human_reply` answers under the live rule
+(named `escalation_id`/`escalation_ids`, or free text with exactly one pending
+at that point of the transcript) moves to `answered` (the gateway exited
+between the reply's transcript save and the live hook's index write). Replies
+are replayed *before* deadlines are swept, each judged against the record's
+deadline as of the reply's own row timestamp, so a timely reply is never
+recorded as `defaulted` because recovery ran after the deadline. A record
+still inside the grace is *deferred* — neither retracted nor trusted — and the
+member is marked reconciled only when nothing was deferred, so it is looked at
+again on the next read. The mark is keyed to the transcript's generation
+(persisted mtime plus live-window length), not to the process: a rewind or any
+rewrite that removes a card row changes the generation and the index is
+re-derived on the next read whether or not the member has anything pending (a
+rewind can drop the reply that **answered** a record while its card stays: that
+record is provisionally reopened and must find its reply again in the replay —
+one that does not is reopened for real, `reopened` in the result, then judged
+against its deadline like any other; an answered record whose card row is gone
+is left as history). A card the transcript still holds but the index no longer
+does — the size cap evicts settled entries oldest-first while their rows live on
+— takes part in the replay as a **counting-only** candidate, so a typed reply
+that was ambiguous when it was made stays ambiguous and cannot falsely
+re-answer a reopened record; such phantoms are never written back. The live hook keeps the same
+direction: the human's reply row is persisted first and the record is marked
+`answered` only when that save committed; an unprimed memory view is not an
+empty one — the hook falls back to the file rather than treating "nothing
+cached" as "nothing pending". The hook's persist-and-mark tasks are **serialised
+per slot in transcript order** (each awaits its predecessor), so a chip for A
+appended just before a typed reply has marked A before the typed reply is
+judged — otherwise a slow save for the chip let the typed reply run first, see
+two pending, decline, and leave B lit until the next reply.
+
+The reply that answers also pushes a slots update, so the badge clears with
+the reply. One SEL `session_escalate` line is written per delivery, naming the
+escalation id, the target thread, and whether a deadline, default and options
+were carried; caller-side refusals are audited as `session_control.escalate`
+denials with the same codes the peer path uses.
+
+Three constraints are the contract, and each has a corresponding refusal or
+absence in the code rather than a note in the tool description:
+
+1. **Non-blocking, with a veto window.** Delivery *is* success; the caller's turn
+   continues and nothing awaits the human. A caller that can proceed on a
+   sensible default states `deadline` + `default_action` — "unless you stop me
+   by *t*, I do *X*" — and the window closing is recorded as `defaulted`, never
+   as a failure. The human's reply is an ordinary user turn in the member
+   thread, with the option chips on the card sending their text as that turn.
+   There is no `session_wait_for_reply`; a caller that wants the answer polls
+   its own thread with `session_read_message` like any other input.
+2. **Attention budget.** The card's home is the member's DM thread, where the
+   chat projection folds escalations by `goal`. Anything that mirrors it
+   elsewhere goes through the notification bus — `system.agent`, `kind:
+   escalation`, `group_key: escalation:<slug>:<goal>` — so N escalations on one
+   goal stack as one entry in the bell today and route as one item once the
+   per-channel "deliver to additional channels" bridge (RFC notification
+   bridge) exists. There is deliberately **no transport-specific switch** on
+   this path: a `slack_escalate`-style boolean would be a persisted contract
+   the bridge would have to migrate on day one.
+3. **Escalation is not approval.** This verb carries a decision the member is
+   allowed to make on its own if unanswered. Anything the human must
+   *actively grant* — objective and metric definitions, budgets, the member's
+   own continuation or scope — must not travel here, and this PR implements no
+   approval flow. The distinction is not blocking-vs-non-blocking
+   (`ask_question` is itself non-blocking) but *who may act if nobody answers*:
+   an escalation lets the member proceed on its stated default; an approval
+   never does, and stays on the approval surfaces that wait for the grant.
+
 ## Configuration
 
 `agent.session_control` (bool, default **true**). The grant that decides who may
@@ -555,10 +803,21 @@ folder tools individually.
   into another session's conversation, but only one the same `authorize_target`
   guard admits: a channel-linked, channel-mirrored, crew-mode, incognito,
   app-scoped, unattended or cross-workspace target is refused, so the verb cannot
-  reach a conversation other people are party to. The residual is the queued arm's
+  reach a conversation other people are party to. `session_escalate` reaches
+  only the caller's own thread or its creating member's — never
+  a third session. The residual is the queued arm's
   second authorization moment, recorded above and tracked as #5911.
 - **No cross-workspace or cross-machine reach.** The boundary is one gateway's
   live sessions in one workspace.
+- **No deadline wakeup.** Nothing fires when an escalation's veto window
+  closes: the index reads the record as `defaulted`/`expired` on the next
+  read, and the member that declared the default is the one that acts on it
+  — a member whose turn ends before its own deadline must arrange its own
+  wake (a monitor loop or a schedule); the tool description and the success
+  reply both say so, because that member is the only actor who can keep the
+  promise the card made. `defaulted` therefore records that the window closed
+  with a default declared — not that the action ran. A timer here would make
+  the gateway, not the member, the actor of record for the default.
 - **No waking closed sessions.** See above.
 - **No writes on the read path.** `session_read_message` never changes the
   target's state, so a poll loop cannot perturb what it is measuring.

@@ -172,6 +172,13 @@ export function deriveFollowUpOptions(
     // `queued` is an UNCONDITIONAL stop: its queue entry OUTLIVES the error (only a hard
     // kill clears the queue), so re-offering the pill would run the choice a second time.
     if (m.role === 'queued') return { followUpOptions: [], followUpIsPlan: false, followUpSourceKey: null }
+    // An `escalation` row (a crew member's `session_escalate` card) ENDS the scan and offers
+    // nothing: its own choices, if any, belong to the card (`meta.options`, rendered by the
+    // card itself and answered with `meta.escalation_id`), never to this bar. Left transparent,
+    // the scan walked past it to the PREVIOUS assistant turn's `[OPTIONS:]` marker, and a
+    // click on one of those stale chips posted as a live user row that `mark_answered` read
+    // as the answer to the escalation — text matching none of the options it offered.
+    if (m.role === 'escalation') return { followUpOptions: [], followUpIsPlan: false, followUpSourceKey: null }
     if (m.role === 'user') {
       if (!sawError) return { followUpOptions: [], followUpIsPlan: false, followUpSourceKey: null }
       // Cross this failed turn and keep looking. Re-armed only by another error,

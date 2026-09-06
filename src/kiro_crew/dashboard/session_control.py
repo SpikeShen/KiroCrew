@@ -34,7 +34,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from datetime import timezone
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from kiro_crew.config.loader import (
     KiroCrewConfig,
@@ -52,12 +54,19 @@ from kiro_crew.dashboard.state import (
     MAX_SLOTS_PER_CREATOR,
     SlotOrigin,
     _safe_folder_tree,
+    append_and_surface,
 )
 from kiro_crew.dashboard.stop_retry import allow_escalation
-from kiro_crew.history import metadata_now_iso, transcript_stem
+from kiro_crew.history import metadata_now_iso, mint_row_mid, transcript_stem
+from kiro_crew.notifications.bus import NotificationPayload
 from kiro_crew.security import redact, redact_and_truncate
 from kiro_crew.sel import sel
 from kiro_crew.validation import MAX_LONG_STRING
+
+# Deliberately AFTER `validation`: `crew_conversation` imports `members`, which
+# imports `artifacts`, which imports `validation` — loading it first re-enters a
+# half-initialised `artifacts` (circular import). isort would hoist it; keep it here.
+from kiro_crew import crew_conversation as conv  # noqa: E402  # isort: skip
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from kiro_crew.dashboard.state import DashboardState, _ChatSlot
@@ -1938,6 +1947,528 @@ async def send_to_target(
         detail={"started": started, "chars": len(body)},
     )
     return {"ok": True, "target": slot.key, "started": started}
+
+
+#: Transcript role of an escalation card. A dedicated role (rather than a
+#: ``notice`` with a kind) so the chat-profile projection, the Sessions page
+#: and the conversation index all key on one word, and so a card can never be
+#: mistaken for something the model said.
+ESCALATION_ROLE = conv.ESCALATION_ROW_ROLE
+ESCALATION_CLS = "msg msg-escalation"
+
+#: The ``resources`` prefix every escalation SEL denial carries. There is no
+#: session target to name (the human is not a slot), so the refusal code is the
+#: resource.
+_ESCALATION_DENIAL_RESOURCE = "escalate"
+
+MAX_ESCALATION_OPTION_CHARS = 120
+MAX_ESCALATION_FIELD_CHARS = 500
+
+
+def _member_slug(caller_key: str) -> str:
+    """The member slug a DM slot key names, or ``""`` for any other slot."""
+    # Lazy for the same layering reason `_member_caller` documents: `members`
+    # imports `validation`, which sits below this module.
+    from kiro_crew.members import DM_SLOT_KEY_PREFIX
+
+    if not caller_key.startswith(DM_SLOT_KEY_PREFIX):
+        return ""
+    return caller_key[len(DM_SLOT_KEY_PREFIX) :]
+
+
+def _escalation_denied(
+    caller_session_key: str, reason: str, code: str, status: int = 403
+) -> SessionControlError:
+    """Build an escalation refusal AND write its SEL denial record.
+
+    Every refusal on the ``session_escalate`` path — caller gates, routing
+    (``workspace_mismatch`` / owner thread closed), the post-await recheck and
+    the index write — goes through this one door, so a refusal after
+    authorization is audited exactly like one before it.
+    """
+    _audit_reason = redact(reason)
+    _sel_off_loop(
+        lambda: sel().log_api_access(
+            caller=f"session:{caller_session_key or 'unknown'}",
+            operation="session_control.escalate",
+            outcome="denied",
+            source="mcp",
+            resources=f"{_ESCALATION_DENIAL_RESOURCE}:{code}",
+            error=_audit_reason,
+        ),
+        "session-control denial audit",
+    )
+    return SessionControlError(reason, status=status, code=code)
+
+
+def _authorize_escalation_caller(
+    state: "DashboardState", *, caller_session_key: str
+) -> tuple["_ChatSlot", str]:
+    """The caller-side half of :func:`authorize_target`, for a target that is
+    not a session.
+
+    The human is not a slot, so none of the target gates apply — but every
+    CALLER gate does, in the same order and with the same codes, because an
+    escalation is still a session reaching outside its own transcript: an
+    unidentified, disabled, unattended, app-scoped, ephemeral, channel-linked or
+    mirrored caller is refused here exactly as it would be for a peer target.
+    Denials are SEL-audited under ``session_control.escalate`` like every other
+    refusal on this surface. Returns the caller's slot and slot key.
+    """
+
+    def deny(reason: str, code: str, status: int = 403) -> SessionControlError:
+        return _escalation_denied(caller_session_key, reason, code, status)
+
+    caller_key = caller_slot_key(state, caller_session_key)
+    if not caller_key:
+        raise deny("caller session could not be identified", "caller_unidentified")
+    if not session_control_enabled() and not _member_caller(caller_key):
+        raise deny(
+            "session control is disabled in config (agent.session_control)",
+            "session_control_disabled",
+        )
+    if caller_key.startswith(UNATTENDED_SLOT_PREFIXES) and not _cron_caller(caller_key):
+        raise deny(
+            "unattended sessions (scheduled runs) cannot escalate to the user",
+            "unattended_caller",
+        )
+    caller_slot = state.get_slot(caller_key)
+    if caller_slot is None:
+        raise deny("caller session is no longer open", "caller_gone")
+    try:
+        # Same app-scope / app-owned-cron / ephemeral / channel-link / mirror
+        # gates the create and target paths apply to a caller, from the one
+        # function that spells them (which evaluates the cron refusal itself, so
+        # it is not repeated here), so a new caller-side refusal lands on this
+        # path automatically.
+        _refuse_ineligible_creator(state, caller_slot)
+    except SessionControlError as exc:
+        raise deny(exc.message, exc.code, status=exc.status) from exc
+    return caller_slot, caller_key
+
+
+def _escalation_home(
+    state: "DashboardState", caller_slot: "_ChatSlot", caller_key: str, caller_session_key: str
+) -> tuple["_ChatSlot", str]:
+    """Where an escalation from *caller_key* lands, and the owning member's slug.
+
+    * a member DM slot escalates into its own thread — the human reads that
+      thread, so the card belongs there;
+    * a worker session a member created (``_created_by`` is a member slot)
+      escalates into the CREATING member's thread — the human never opened the
+      worker, the member did;
+    * any other session escalates into its own transcript (the human is right
+      there); no member index is touched, so ``needs_you`` stays a member-only
+      signal.
+
+    The slug is ``""`` when no member owns the conversation.
+    """
+    slug = _member_slug(caller_key)
+    if slug:
+        return caller_slot, slug
+    creator = getattr(caller_slot, "_created_by", "") or ""
+    creator_slug = _member_slug(creator) if creator else ""
+    if creator_slug:
+        member_slot = state.get_slot(creator)
+        # Same workspace boundary the peer path enforces (`workspace_mismatch`):
+        # a worker moved to another workspace must not write into its creator's
+        # thread in the first one. Refused rather than downgraded to "own
+        # transcript" — the worker asked for the human, and a silent redirect
+        # would hide that the member never saw it.
+        if member_slot is not None and getattr(member_slot, "workspace", "default") != getattr(
+            caller_slot, "workspace", "default"
+        ):
+            raise _escalation_denied(
+                caller_session_key,
+                "the creating member's thread is in a different workspace",
+                code="workspace_mismatch",
+                status=403,
+            )
+        if member_slot is not None:
+            return member_slot, creator_slug
+        # The worker HAS an owning member, but the member's thread is not open:
+        # refuse rather than downgrade to "own transcript". The worker asked for
+        # the human through its member; a card in a worker nobody is reading,
+        # with no index record and no badge, would look delivered and be lost.
+        raise _escalation_denied(
+            caller_session_key,
+            "the creating member's thread is not open; escalate again once it is, or "
+            "report to the member session that owns you",
+            code="target_gone",
+            status=409,
+        )
+    return caller_slot, ""
+
+
+def _clean_field(value: Any, *, limit: int, name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise SessionControlError(f"{name} must be a string", code=f"{name}_invalid", status=400)
+    text = sanitize_outbound(value.strip())
+    if not text:
+        return None
+    if len(text) > limit:
+        raise SessionControlError(
+            f"{name} exceeds {limit} characters", code=f"{name}_too_long", status=400
+        )
+    return text
+
+
+def _clean_options(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(o, str) for o in value):
+        raise SessionControlError(
+            "options must be a list of strings", code="options_invalid", status=400
+        )
+    cleaned: list[str] = []
+    for raw in value:
+        text = sanitize_outbound(raw.strip())
+        if not text:
+            continue
+        if len(text) > MAX_ESCALATION_OPTION_CHARS:
+            raise SessionControlError(
+                f"an option exceeds {MAX_ESCALATION_OPTION_CHARS} characters",
+                code="options_too_long",
+                status=400,
+            )
+        if text not in cleaned:
+            cleaned.append(text)
+    if len(cleaned) > conv.MAX_ESCALATION_OPTIONS:
+        raise SessionControlError(
+            f"at most {conv.MAX_ESCALATION_OPTIONS} options", code="options_too_many", status=400
+        )
+    return cleaned
+
+
+async def escalate_to_user(
+    state: "DashboardState",
+    *,
+    caller_session_key: str,
+    message: str,
+    deadline: Any = None,
+    default_action: str | None = None,
+    options: list[str] | None = None,
+    goal: str | None = None,
+) -> dict[str, Any]:
+    """``session_escalate``: raise something to the human as a peer.
+
+    Its own tool, not a reserved ``target`` of ``session_send``, because the two
+    differ in kind: a send delivers text the target session RUNS as a turn; an
+    escalation writes a transcript row, rings the bell and returns without
+    starting anything. A separate name is also what lets policy tell them apart
+    — the channel-agent containment list, the caller-identity gate and the
+    advertised-set pin each classify ``session_escalate`` on its own.
+
+    Three properties are load-bearing and are what the spec pins:
+
+    * **Non-blocking with a veto window.** Delivery IS success. The caller's
+      turn continues; nothing waits on the human. When the caller states a
+      ``deadline`` and a ``default_action``, the card shows both — "unless you
+      stop me by <time>, I do <action>" — and the window passing is recorded
+      on the conversation index as ``defaulted`` (the member proceeds), never
+      as a failure. The human's reply, when it comes, is an ordinary user
+      turn in the member's DM thread.
+    * **Attention budget.** The card lands in the member's DM thread on the
+      Crew Members page, grouped there by ``goal``. Anything that mirrors it
+      elsewhere (the bell today; chat transports once the notification bridge
+      exists) goes through the notification bus with a per-goal ``group_key``
+      so N escalations on one goal stack instead of ringing N times. There is
+      deliberately NO transport-specific switch here.
+    * **Escalation is not approval.** This path carries a decision the member
+      can make on its own if unanswered. Anything that needs the human to
+      *actively* grant — objective/metric definitions, budgets, the member's
+      own continued existence — must not use it; those are approval flows and
+      are out of scope of ``session_escalate``.
+
+    Ordering matters: the index record is written BEFORE the card is
+    surfaced, under a pre-minted row id. Surfacing first opened a window in
+    which a fast reply found nothing pending to answer and the record created
+    a moment later kept ``needs_you`` lit with the human's answer already in
+    the thread.
+    """
+    # Same prewarm ordering as `send_to_target`, for the same reasons: the SEL
+    # write inside the deny path must be a cache hit, and the config warm must
+    # be the LAST suspension before the synchronous caller gate.
+    try:
+        await asyncio.to_thread(sel)
+    except Exception:  # noqa: BLE001 - a prewarm failure must not fail the escalation
+        logger.warning("session-control SEL prewarm failed", exc_info=True)
+    await prewarm_enabled_check()
+
+    body = message.strip()
+    if not body:
+        raise SessionControlError("message is empty", code="message_empty", status=400)
+    if len(body) > MAX_SEND_MESSAGE_CHARS:
+        raise SessionControlError(
+            f"message exceeds {MAX_SEND_MESSAGE_CHARS} characters",
+            code="message_too_long",
+            status=400,
+        )
+    message = body
+    caller_slot, caller_key = _authorize_escalation_caller(
+        state, caller_session_key=caller_session_key
+    )
+    home, slug = _escalation_home(state, caller_slot, caller_key, caller_session_key)
+
+    try:
+        deadline_iso = conv.resolve_deadline(deadline)
+    except ValueError as exc:
+        raise SessionControlError(str(exc), code="deadline_invalid", status=400) from exc
+    default_clean = _clean_field(
+        default_action, limit=MAX_ESCALATION_FIELD_CHARS, name="default_action"
+    )
+    goal_clean = _clean_field(goal, limit=MAX_ESCALATION_FIELD_CHARS, name="goal")
+    options_clean = _clean_options(options)
+
+    escalation_id = conv.new_escalation_id()
+    created_ts = metadata_now_iso()
+    # Minted here rather than by `append`, so the index can point at the row
+    # before the row exists; `append` keeps a supplied id as-is.
+    mid = mint_row_mid()
+    member_name = getattr(home, "agent", "") or slug
+    meta: dict[str, Any] = {
+        "mid": mid,
+        "kind": "escalation",
+        "escalation_id": escalation_id,
+        "from_session": caller_key,
+        # The crew member's display name, so the card can say WHO will act on
+        # the default in the same words the bell uses ("Radar will: ..."), not
+        # "the member".
+        "member": member_name,
+        "deadline": deadline_iso,
+        "default_action": default_clean,
+        "options": options_clean,
+        "goal": goal_clean,
+        "state": "pending",
+        "created_ts": created_ts,
+    }
+    if slug:
+        # The index IS the escalation's lifecycle (badge, deadline, reply
+        # tracking). If it cannot be written the card must not ship as if it
+        # had one: refuse, so the caller can fall back to plain messaging or
+        # retry, instead of a delivered card whose state is permanently absent.
+        try:
+            await asyncio.to_thread(
+                conv.record_escalation,
+                slug,
+                member=member_name,
+                session_key=home.key,
+                mid=mid,
+                escalation_id=escalation_id,
+                from_session=caller_key,
+                created_ts=created_ts,
+                deadline=deadline_iso,
+                default_action=default_clean,
+                goal=goal_clean,
+                options=options_clean,
+            )
+        except conv.EscalationBacklogFull as exc:
+            # Backpressure, not a fault: the member already has the ceiling's
+            # worth of open decisions. Refused BEFORE any row exists, so the
+            # member is told to wait for answers (or stop) rather than add a
+            # card nobody is reading — and the index file stays bounded.
+            raise _escalation_denied(
+                caller_key,
+                f"the human already has {exc.pending} of your escalations waiting; "
+                "wait for answers (or report to the member that owns you) before "
+                "raising another",
+                "escalation_backlog_full",
+                429,
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - any write failure is the same refusal
+            logger.warning("escalation index write failed for %s", slug, exc_info=True)
+            raise _escalation_denied(
+                caller_key,
+                "the member's conversation index could not be written; the escalation "
+                "was not delivered — retry, or send the message to the user's session "
+                "as a plain message",
+                "escalation_index_unavailable",
+                500,
+            ) from exc
+
+    def _retract() -> None:
+        if not slug:
+            return
+        try:
+            conv.retract_escalation(slug, escalation_id)
+        except Exception:  # noqa: BLE001 - compensation is best-effort; logged
+            logger.warning("escalation retract failed for %s", slug, exc_info=True)
+
+    # Re-check across the suspension: the index write above awaited the
+    # executor, and the thread the card is about to land in may have closed —
+    # or the worker may have been moved to another workspace — in the meantime
+    # (`create_session` re-gates after every await for the same reason). A
+    # record pointing at a row in a closed slot would keep ``needs_you`` lit for
+    # a card nobody can open — retract it and refuse.
+    live_caller = state.get_slot(caller_key)
+    caller_still_eligible = live_caller is caller_slot
+    if caller_still_eligible:
+        try:
+            # The same caller-side gates, re-run at the point of the write (as
+            # `create_session` does): a caller that became app-scoped, ephemeral,
+            # linked or mirrored while the index was being written must not
+            # complete the delivery. `caller_slot` IS `live_caller` here.
+            _refuse_ineligible_creator(state, caller_slot)
+        except SessionControlError:
+            caller_still_eligible = False
+    if (
+        not caller_still_eligible
+        or state.get_slot(home.key) is not home
+        or (
+            home is not caller_slot
+            and getattr(home, "workspace", "default")
+            != getattr(live_caller, "workspace", "default")
+        )
+    ):
+        await asyncio.to_thread(_retract)
+        raise _escalation_denied(
+            caller_session_key,
+            "the caller or the thread this escalation was addressed to closed or changed "
+            "while it was being delivered",
+            code="target_gone",
+            status=409,
+        )
+
+    # Same sanitisation as the peer path: the body comes from another session
+    # and is persisted into — and broadcast from — a transcript the human reads.
+    # Consistency between the index and the transcript runs in ONE direction:
+    # the transcript is the truth and the index is a thin projection of it. The
+    # row is appended and surfaced like any other and persisted by the slot's
+    # normal flush; if the gateway exits before that flush, the record is an
+    # orphan (pending, no row) and the roster's restore-time sweep
+    # (``crew_conversation.reconcile_with_transcript``) retracts it — no forced save and no
+    # rollback on this path, so a concurrent append can never be caught in one.
+    try:
+        append_and_surface(
+            state, home, ESCALATION_ROLE, sanitize_outbound(message), ESCALATION_CLS, meta=meta
+        )
+    except Exception:
+        # The record exists but its row never did: without this compensation a
+        # no-deadline record would keep the badge lit until the next restore.
+        await asyncio.to_thread(_retract)
+        raise
+
+    _mirror_escalation(
+        state,
+        member_name=member_name,
+        slug=slug,
+        home_key=home.key,
+        message=message,
+        goal=goal_clean,
+        deadline=deadline_iso,
+        default_action=default_clean,
+        options=options_clean,
+    )
+
+    try:
+        state.push_slots_update()
+    except Exception:  # pragma: no cover - sidebar refresh is best-effort
+        logger.debug("escalate_to_user: push_slots_update failed", exc_info=True)
+
+    _audit(
+        caller_session_key=caller_session_key,
+        operation="escalate",
+        slot_key=home.key,
+        outcome="allowed",
+        detail={
+            "escalation_id": escalation_id,
+            "chars": len(message),
+            "deadline": deadline_iso or "",
+            "has_default": bool(default_clean),
+            "options": len(options_clean),
+            "member": slug,
+        },
+    )
+    return {
+        "ok": True,
+        "target": home.key,
+        "escalation_id": escalation_id,
+        "deadline": deadline_iso,
+        "member": member_name if slug else "",
+        # Whether the human's reply lands in the CALLER's own thread. False for
+        # a worker: the reply goes to the member that owns it, and reaches the
+        # worker only if that member relays it.
+        "reply_in_caller_thread": home.key == caller_key,
+    }
+
+
+def _humanize_deadline(deadline_iso: str) -> str:
+    """``2026-09-06T09:30:00+00:00`` -> ``Sep 6, 09:30 UTC`` for the bell body.
+
+    The bell has no locale; a compact, unambiguous UTC clock time reads far
+    better than a raw ISO string, and the thread row (which the frontend
+    localises, with its zone) is where the precise, local time lives. Same
+    month-day order as the row's English rendering ("Sep 6, 2026, 9:30 AM
+    UTC"), so a reader following bell -> thread sees one shape twice. Falls
+    back to the raw string for anything that does not parse."""
+    parsed = conv.parse_ts(deadline_iso)
+    if parsed is None:
+        return deadline_iso
+    utc = parsed.astimezone(timezone.utc)
+    return f"{utc:%b} {utc.day}, {utc:%H:%M} UTC"
+
+
+def _mirror_escalation(
+    state: "DashboardState",
+    *,
+    member_name: str,
+    slug: str,
+    home_key: str,
+    message: str,
+    goal: str | None,
+    deadline: str | None,
+    default_action: str | None,
+    options: list[str] | None = None,
+) -> None:
+    """Mirror the card onto the notification bus (bell today; the transport
+    bridge tomorrow). One ``group_key`` per (member, goal) so the feed stacks.
+    Best-effort: the card in the thread is the delivery of record.
+
+    The veto window is spelled out in words — "Unless you reply by <time>,
+    <member> will: <action>" — because inaction-means-consent is the
+    decision-critical fact and a bare timestamp does not say it. The offered
+    ``options`` ride the body as one ``·``-joined line so the human can read
+    the choice wherever the mirror lands and answer it in the thread — the bell
+    renders text, so they are readable there, not clickable. No emoji: the
+    product's notification copy is words."""
+    try:
+        first_line = next((ln.strip() for ln in message.splitlines() if ln.strip()), "")
+        who = member_name or home_key
+        lines = [redact_and_truncate(first_line, 280)] if first_line else []
+        when = _humanize_deadline(deadline) if deadline else ""
+        if when and default_action:
+            lines.append(
+                f"Unless you reply by {when}, {who} will: "
+                f"{redact_and_truncate(default_action, 120)}"
+            )
+        elif when:
+            lines.append(f"Reply by {when}.")
+        elif default_action:
+            lines.append(f"If unanswered, {who} will: {redact_and_truncate(default_action, 120)}")
+        if options:
+            lines.append(f"Options: {redact_and_truncate(' · '.join(options), 240)}")
+        body = "\n".join(lines)
+        title = f"{who} needs you"
+        url = (
+            f"/members?member={quote(member_name, safe='')}"
+            if slug
+            else f"/?sid={quote(home_key, safe='')}"
+        )
+        payload = NotificationPayload(
+            source="system",
+            channel="system.agent",
+            kind="escalation",
+            title=title,
+            body=body,
+            group_key=f"escalation:{slug or home_key}:{goal or 'default'}",
+            url=url,
+            meta={"slot": home_key, "member": slug, "goal": goal or ""},
+        )
+        state.notification_bus.push(payload)
+    except Exception:  # noqa: BLE001 - mirroring is secondary to the thread card
+        logger.debug("escalation mirror failed", exc_info=True)
 
 
 def read_messages(

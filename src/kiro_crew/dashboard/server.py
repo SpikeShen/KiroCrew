@@ -445,6 +445,7 @@ _STRICT_INTERNAL_API_PATHS = frozenset(
         "/api/session-control/stop",
         "/api/session-control/close",
         "/api/session-control/send",
+        "/api/session-control/escalate",
         "/api/session-control/read",
         # MCP-only structured monitor inspection. The caller selects its
         # session identity through X-Session-Key, so cookie authentication can
@@ -1441,6 +1442,10 @@ def _register_mcp_routes(app: web.Application) -> None:
     )
     app.router.add_post(
         "/api/session-control/send", _deferred_session_control("api_session_control_send")
+    )
+    app.router.add_post(
+        "/api/session-control/escalate",
+        _deferred_session_control("api_session_control_escalate"),
     )
     app.router.add_get(
         "/api/session-control/read", _deferred_session_control("api_session_control_read")

@@ -9089,6 +9089,14 @@
         "continue": "Continuar",
         "continue_hint": "Retomar de onde parou. O trabalho já gravado no disco permanece intacto."
       },
+      "escalationNotice": {
+        "deadline": "Responda até {{time}}; sem resposta, nada acontece e o pedido continua em aberto.",
+        "needs_you": "Precisa de você",
+        "options": "Para responder, digite uma destas opções como resposta neste tópico: {{list}}",
+        "reply_hint": "Responda neste tópico para dar sua resposta.",
+        "veto": "Se você não responder até {{time}}, {{member}} vai: {{action}}",
+        "veto_generic": "Se você não responder até {{time}}, o membro vai: {{action}}"
+      },
       "folderPanel": {
         "clear_search": "Limpar pesquisa",
         "empty_folder": "Pasta vazia",

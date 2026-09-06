@@ -45,6 +45,9 @@ describe('default registry reproduces the old role chain', () => {
     expect(idFor(msg('error'))).toBe('error')
     expect(idFor(msg('notice'))).toBe('notice')
     expect(idFor(msg('mcp_oauth'))).toBe('mcp_oauth')
+    // A crew member's escalation card is claimed by DEFAULT: the bell deep-links
+    // to the thread it landed in, and an unclaimed role there drew nothing.
+    expect(idFor(msg('escalation'))).toBe('escalation')
   })
 
   it('claims a tool row only when it is the visible 🔧 message', () => {

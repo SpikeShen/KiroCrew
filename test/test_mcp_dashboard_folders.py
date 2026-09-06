@@ -1811,5 +1811,6 @@ class TestAdvertisedSet:
             "session_stop",
             "session_close",
             "session_send",
+            "session_escalate",
             "session_read_message",
         }

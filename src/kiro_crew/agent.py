@@ -5320,10 +5320,15 @@ _CONDUCTOR_DASHBOARD_GRANTS: tuple[str, ...] = (
 #: such ownership fence, which is why its list withholds the writes. Without
 #: these two the dispatch loop this feature exists for (create → seed → patrol
 #: → stop) stalls on an approval prompt at its second step with nobody at the
-#: keyboard.
+#: keyboard. ``session_escalate`` joins on a narrower bound still: it runs
+#: nothing and writes only into the member's OWN DM thread (``_escalation_home``
+#: routes a member caller to itself), so its worst case is a card and a bell in
+#: the thread the human already reads — and a member that hits a wall mid-turn
+#: with nobody at the keyboard is exactly when it must not stall on approval.
 _MEMBER_DASHBOARD_GRANTS: tuple[str, ...] = _CONDUCTOR_DASHBOARD_GRANTS + (
     "@kirocrew-dashboard/session_send",
     "@kirocrew-dashboard/session_stop",
+    "@kirocrew-dashboard/session_escalate",
 )
 
 

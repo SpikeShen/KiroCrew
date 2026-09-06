@@ -118,6 +118,37 @@ describe('MembersPage thread', () => {
     expect(screen.queryByTestId('member-pin-chip')).toBeNull()
   })
 
+  it('opens the member named by ?member= once the roster loads, then strips the param', async () => {
+    // The escalation bell mirror emits `/members?member=<crew name>`; the
+    // notification's "Open" must land on THAT thread, not an unselected roster.
+    ;(api.members as ReturnType<typeof vi.fn>).mockResolvedValue({
+      members: [row(), row({ name: 'research', slug: 'research' })],
+      default_agent: 'kirocrew',
+    })
+    ;(api.memberThread as ReturnType<typeof vi.fn>).mockResolvedValue({
+      slot_key: 'member-research',
+      slug: 'research',
+      member: 'research',
+      created: true,
+    })
+    renderWithProviders(<MembersPage />, { route: '/members?member=research' })
+    await waitFor(() => expect(api.memberThread).toHaveBeenCalledWith('research'))
+    expect(await screen.findByTestId('chat-pane-stub')).toHaveTextContent('member-research')
+    // Consumed once: no second open is issued for the same param on re-render.
+    expect(api.memberThread).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves the roster showing when ?member= names no crew', async () => {
+    ;(api.members as ReturnType<typeof vi.fn>).mockResolvedValue({
+      members: [row()],
+      default_agent: 'kirocrew',
+    })
+    renderWithProviders(<MembersPage />, { route: '/members?member=nobody' })
+    expect(await screen.findByText('oncall')).toBeInTheDocument()
+    expect(api.memberThread).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('chat-pane-stub')).toBeNull()
+  })
+
   it('orders the roster by most recent activity, never-talked members last alphabetically', async () => {
     await renderPage([
       row({ name: 'zeta-quiet', slug: 'zeta-quiet' }),
