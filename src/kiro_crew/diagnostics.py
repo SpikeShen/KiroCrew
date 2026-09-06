@@ -25,6 +25,7 @@ import logging
 import os
 import platform
 import re
+import stat as stat_module
 import subprocess
 import sys
 import time
@@ -233,9 +234,7 @@ def _kiro_cli_chat_log() -> Path | None:
         # public issue. Redaction is not a backstop for that: .netrc/.pem bodies
         # do not match the credential patterns. Refuse the path outright.
         if is_sensitive_path(str(p)):
-            logger.warning(
-                "ignoring KIRO_CHAT_LOG_FILE: %s resolves to a sensitive path", p
-            )
+            logger.warning("ignoring KIRO_CHAT_LOG_FILE: %s resolves to a sensitive path", p)
             return None
         return p if _usable_log(p) else None
     for base in _kiro_log_dirs():
@@ -259,6 +258,209 @@ def _kiro_cli_extra_logs() -> list[Path]:
     return out
 
 
+# ── Live log reader (kiro_cli_logs MCP tool) ─────────────────────────────────
+# A dedicated read-only view of kiro-cli's OWN logs, so the agent driving
+# kiro-cli has first-hand diagnostics when the backend rejects a turn. The logs
+# Kiro Crew already collects for a bundle sit OUTSIDE the eight fenced identity
+# stores (``identity_stores.IDENTITY_STORE_ROOTS`` -> ``kiro-log/*.log`` under
+# XDG_RUNTIME_DIR|TMPDIR). Deliberately NOT the ``sessions/cli/<sid>.jsonl``
+# transcripts: those are cross-session conversation content, a more sensitive
+# surface than request/response logs and one ``_scrub`` (a credential pass) does
+# not narrow, so this tool stays scoped to logs. This does NOT open a path
+# carve-out on the fence: the same output flows through the exact ``_scrub``
+# stack the bundle uses (``redact_exfiltration_urls`` then ``redact_credentials``
+# then ``_EXTRA_REDACTIONS``), so redaction — not a path exception — is what
+# makes returning the bytes safe, and it holds regardless of how the (unresolved)
+# log/token separability question lands.
+
+#: Hard ceiling on the returned text, independent of ``tail``. A log tail is
+#: precisely the shape that deadlocks a pipe, so the bound is by BYTES; ``tail``
+#: (lines) narrows within it but can never raise it.
+_MAX_LOG_READ_BYTES = 256 * 1024
+#: Default line count when the caller does not pass ``tail``.
+_DEFAULT_LOG_TAIL = 200
+
+
+def _read_log_tail(path: Path, max_bytes: int) -> str | None:
+    """Tail a log file through one descriptor, refusing a symlinked final component.
+
+    Closes the check-then-open TOCTOU window that a plain ``path.open()`` leaves:
+    the source directories include the world-writable ``/tmp/kiro-log``, so a
+    local principal could swap a validated regular file for a symlink to
+    ``~/.ssh/config`` between the ``is_sensitive_path`` check and the read, and a
+    following ``open`` would return the sensitive target's bytes (redaction is no
+    backstop — a ``.ssh``/``.pem`` body matches no credential pattern).
+
+    Where the platform offers ``O_NOFOLLOW`` (POSIX) the open uses it, so the
+    kernel refuses at open time if the final component is a symlink (``ELOOP``);
+    the descriptor is then ``fstat``-confirmed to be a regular file and THAT
+    descriptor is tailed, so the bytes returned are provably from the path that
+    was validated, not one swapped in afterward. ``O_NOFOLLOW`` guards only the
+    FINAL component; the intermediate dirs are the source pickers' own fixed,
+    non-symlinked anchors (``_usable_dir`` already rejects a linked ``kiro-log``).
+
+    On a platform without ``O_NOFOLLOW`` (Windows) the open omits it and the
+    symlink defense is the caller's pre-open ``is_symlink`` check plus the
+    ``fstat`` regular-file check here — the same protection the bundle collector's
+    :func:`_read_text_tail` relies on, so this is not a Windows regression of that
+    behavior. The kernel-enforced no-follow is a POSIX STRENGTHENING, not a
+    Windows-only feature that would otherwise disable the read.
+
+    Returns ``None`` (skip this source) on any refusal or non-regular file rather
+    than raising. The byte cut lands on a LINE boundary, same as
+    :func:`_read_text_tail`: a cut inside ``Authorization: Basic <b64>`` would
+    keep the credential and drop the header token that redacts it, so the partial
+    first line is discarded.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(str(path), flags)
+    except OSError:
+        # ELOOP (final component is a symlink, where O_NOFOLLOW is honored) lands
+        # here too — refuse, do not fall back to a following open.
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat_module.S_ISREG(st.st_mode):
+            return None
+        size = st.st_size
+        if size > max_bytes:
+            os.lseek(fd, size - max_bytes, os.SEEK_SET)
+            marker = b"...[truncated: showing last %d bytes]...\n" % max_bytes
+            raw = os.read(fd, max_bytes)
+            # Drop the partial line the offset landed inside (line-boundary cut).
+            nl = raw.find(b"\n")
+            raw = marker + (raw[nl + 1 :] if nl != -1 else raw)
+        else:
+            chunks: list[bytes] = []
+            while True:
+                block = os.read(fd, 1 << 16)
+                if not block:
+                    break
+                chunks.append(block)
+            raw = b"".join(chunks)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return raw.decode("utf-8", errors="replace")
+
+
+def _tail_lines(text: str, tail: int) -> str:
+    """Keep the last ``tail`` lines of ``text`` (whole file when tail <= 0)."""
+    if tail <= 0:
+        return text
+    lines = text.splitlines(keepends=True)
+    if len(lines) <= tail:
+        return text
+    return "".join(lines[-tail:])
+
+
+def _filter_since(text: str, since: str) -> str:
+    """Keep only lines whose text sorts >= ``since`` once a leading timestamp is seen.
+
+    kiro-cli log lines lead with an ISO-ish timestamp, so a lexical compare of
+    the line's leading token against ``since`` is a monotone filter without
+    parsing every timestamp shape. A line with no recognizable leading timestamp
+    is KEPT — dropping unparseable lines would silently hide multi-line frames
+    (JSON bodies, stack traces) that belong to a kept event. ``since`` is matched
+    against the start of each line, so a prefix like ``"2026-09-06"`` or
+    ``"2026-09-06T16:"`` both work.
+    """
+    since = since.strip()
+    if not since:
+        return text
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        head = line.lstrip()
+        # Only compare lines that actually begin with a digit (a timestamp);
+        # everything else is a continuation line and rides along with its event.
+        if head[:1].isdigit():
+            if head[: len(since)] < since:
+                continue
+        out.append(line)
+    return "".join(out)
+
+
+def read_kiro_cli_logs(
+    *,
+    tail: int | None = None,
+    since: str | None = None,
+    max_bytes: int = _MAX_LOG_READ_BYTES,
+) -> str:
+    """Redacted tail of kiro-cli's own logs, for diagnosing a rejected turn.
+
+    Reads ONLY the ``kiro-log`` chat/mcp/lsp log files — never the fenced
+    identity stores, and deliberately NOT the ``sessions/cli/<sid>.jsonl``
+    transcripts: those are conversation content shared across every gateway
+    session (including incognito/temporary ones) with no per-caller scoping the
+    ``_scrub`` credential pass would not touch, so returning the globally-newest
+    ones would disclose another session's private conversation. This tool stays
+    scoped to the request/response LOGS that explain a rejected turn. Every
+    source is byte-capped (``max_bytes``, so the output can never deadlock a pipe
+    or blow the response), line-tailed to ``tail`` (default
+    :data:`_DEFAULT_LOG_TAIL`), optionally filtered to lines at/after ``since``,
+    and then passed through the shared redaction stack via :func:`_scrub`.
+    Returns a human-readable report with one ``===`` section per source, or a
+    note when no logs exist.
+
+    The read goes through :func:`_read_log_tail`, which opens each source and
+    (where the platform offers ``O_NOFOLLOW``) refuses a symlinked final
+    component at open time, tailing that same descriptor — so a symlink swapped in
+    after the ``is_sensitive_path`` check (the source dirs include the shared
+    ``/tmp/kiro-log``) is refused at open time rather than followed to a
+    sensitive target. Redaction runs AFTER truncation on purpose: the byte cut
+    lands on a line boundary, so no credential is separated from the header token
+    that redacts it.
+    """
+    tail = _DEFAULT_LOG_TAIL if tail is None else tail
+    sections: list[str] = []
+    total_redactions = 0
+
+    sources: list[tuple[str, Path]] = []
+    chat = _kiro_cli_chat_log()
+    if chat is not None:
+        sources.append(("kiro-chat.log", chat))
+    for extra in _kiro_cli_extra_logs():
+        sources.append((extra.name, extra))
+
+    for label, path in sources:
+        try:
+            # First-pass filters over the source pickers (defense in depth): a
+            # symlink or a path resolving into a fenced/sensitive store is
+            # skipped before we even open. On POSIX the authoritative guard
+            # against a check-then-open swap is _read_log_tail's O_NOFOLLOW open;
+            # on Windows (no O_NOFOLLOW) this pre-open is_symlink check plus
+            # _read_log_tail's fstat regular-file check are the symlink defense.
+            if path.is_symlink() or not path.is_file():
+                continue
+            if is_sensitive_path(str(path)):
+                continue
+        except OSError:
+            continue
+        text = _read_log_tail(path, max_bytes)
+        if text is None:
+            continue
+        if since:
+            text = _filter_since(text, since)
+        text = _tail_lines(text, tail)
+        clean, n = _scrub(text)
+        total_redactions += n
+        sections.append(f"=== {label} ({n} secret(s) redacted) ===\n{clean.rstrip(chr(10))}\n")
+
+    if not sections:
+        return (
+            "No kiro-cli logs found. kiro-cli writes its chat/mcp/lsp logs under "
+            "$XDG_RUNTIME_DIR|$TMPDIR/kiro-log/; none exist or are readable here."
+        )
+    header = (
+        f"kiro-cli logs (tail={tail}"
+        + (f", since={since}" if since else "")
+        + f", {total_redactions} secret(s) redacted, capped at {max_bytes // 1024} KiB/source)\n"
+    )
+    return header + "\n".join(sections)
+
+
 def _macos_crash_reports() -> list[Path]:
     """Newest kiro-cli / kiro .ips crash reports (macOS only)."""
     if sys.platform != "darwin":
@@ -271,11 +473,7 @@ def _macos_crash_reports() -> list[Path]:
         if not _usable_dir(base):
             continue
         try:
-            reports.extend(
-                p
-                for p in base.glob("kiro*.ips")
-                if p.is_file() and not p.is_symlink()
-            )
+            reports.extend(p for p in base.glob("kiro*.ips") if p.is_file() and not p.is_symlink())
         except OSError:
             continue
     reports.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -545,9 +743,7 @@ def collect_bundle(
         os.O_CREAT | os.O_WRONLY | os.O_TRUNC | getattr(os, "O_BINARY", 0),
         0o600,
     )
-    with os.fdopen(_fd, "wb") as _raw, zipfile.ZipFile(
-        _raw, "w", zipfile.ZIP_DEFLATED
-    ) as zf:
+    with os.fdopen(_fd, "wb") as _raw, zipfile.ZipFile(_raw, "w", zipfile.ZIP_DEFLATED) as zf:
         # Generated members first.
         versions = _versions_text(note)
         zf.writestr("versions.txt", versions)
