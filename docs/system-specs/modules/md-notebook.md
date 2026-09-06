@@ -36,14 +36,84 @@ Rooted at `MD_NOTEBOOK_HOME`, defaulting to `~/.kiro/crew/workspace/md-notebook/
 
 | Path | Contents |
 | --- | --- |
-| `vaults.json` | Vault descriptors. No secrets, but `localPath` is what sync runs git against, so it is in `_SENSITIVE_HOME_DIRS`. Written via a temp file + `os.replace`. |
-| `pat` | GitHub token, chmod 0600, never echoed back to the UI (only a boolean is). Also listed in `_SENSITIVE_HOME_DIRS`, so agent file tools cannot read it through the shared gate — 0600 alone does not isolate another process running as the same user. |
+| `vaults.json` | Vault descriptors. No secrets, but `localPath` is what sync runs git against, so it is in `_SENSITIVE_HOME_DIRS`. Published through the staging directory + `os.replace`. |
+| `pat` | GitHub token, chmod 0600, never echoed back to the UI (only a boolean is). Also listed in `_SENSITIVE_HOME_DIRS`, so agent file tools cannot read it through the shared gate — 0600 alone does not isolate another process running as the same user. Cleared by writing an EMPTY file, never by `unlink`: the empty file is the reader's absent-equivalent, and removing the inode would delete the sandbox mask's mount target. |
+| `settings.json` | The `autoSync` authorization bit and the `lastSync` stamp. Published through the staging directory with `fsync`, so a rename from an unflushed page cache cannot discard an acknowledged toggle. |
+| `../../md-notebook-staging/` | Write-staging directory for the three state files above, at the crew data home ROOT. Every state writer opens its temp HERE and renames onto the target, so no temp carrying PAT bytes ever lands at a name the sandbox masks do not cover. Masked as a whole directory. It is top-level rather than a child of this directory because a mask covers the leaf and not its ancestors: under the agent-writable `workspace/md-notebook` it could be renamed out from under its own mask. Same filesystem, so the publish rename stays atomic. |
 | `vaults/<id>/` | Vaults this app cloned itself. Attached vaults stay where the user has them. |
+
+The three state files and the staging directory resolve through the crew data home and
+ignore `MD_NOTEBOOK_HOME`; only clone data under `vaults/` follows it.
 
 A vault descriptor carries `id`, `name`, `repo`, `localPath`, `branch`, `readOnly`, an
 optional `subfolder` scope, plus `knowledge` and `knowledgeSourceId`. The `external` field
 returned by `GET /api/vaults` is COMPUTED on read (`localPath` is outside `vaults/`) and
 never persisted.
+
+## Sandbox
+
+`sandbox._CREW_HIDDEN_LEAVES` bind-masks the three state files and `md-notebook-staging` in every
+sandbox tier, so an agent's spawned subprocesses cannot read the GitHub token or repoint a
+vault. The backend itself is a sandboxed spawn that OWNS those files, so exactly that one
+spawn gets them back: `_APP_BACKEND_OWNED_LEAVES` declares the leaves it owns and
+`apps/backend.py` passes `app_backend_visible_targets()` as `extra_visible_dirs`, gated on
+shipped-builtin provenance. A spelling that sits beneath an independently masked directory
+is refused rather than carved, because carving it would unmask that whole foreign tree.
+
+Two properties keep the mask meaningful now that the backend can create these files:
+
+* **The masks are materialised before launch.** `mount(2)` cannot target an absent path and
+  the launcher's hiding loops guard on existence, so an absent leaf would get no mask at
+  all and a namespace spawned before the first vault attach would read the PAT saved after
+  it. `_materialize_md_notebook_mask_targets()` creates each leaf's absent-equivalent
+  document (`pat` empty, `vaults.json` `[]`, `settings.json` `{}`) before launch, and refuses
+  the spawn when it cannot — a link at any component, a non-regular file at a leaf, or a
+  creation failure. The staging directory is a direct child of the data home, so the shared
+  `_materialize_maskable_dirs` covers it under its own rule.
+* **The backend spawn starts isolated.** It launches with `-I` and runs the module through
+  `runpy` with an explicit import root, so interpreter startup hooks (`sitecustomize`,
+  `usercustomize`, user-site `.pth`) from an agent-writable directory do not execute in the
+  one namespace where the PAT is unmasked. The other module builtins keep the bare
+  `python -m` launch.
+* **Pre-upgrade orphans are swept.** Older writers staged beside the target, so a crash in
+  that window could leave a PAT-bearing `*.tmp` at a name no mask covers. Every `*.tmp`
+  direct child of the state directory is such an orphan by construction — the writers now
+  stage in the top-level staging directory, and note temps live beside their note under
+  `vaults/<id>/` — so the sweep removes them. Because it DELETES, it carries both link
+  guards the materialiser does and for a stronger reason: the chain goes through
+  `refuse_linked_parent`, and the directory is opened `O_NOFOLLOW | O_DIRECTORY` with every
+  `lstat`/`unlink` issued against that pinned descriptor, so neither an agent-planted link
+  nor a swap mid-sweep can redirect a delete. A root failing either guard is skipped, not
+  escalated to a spawn refusal — skipping removes the hazard, while refusing would break
+  every spawn on a host that merely symlinks its legacy home. Regular files only, sparing
+  another spawn's in-flight ceiling temp) and refuses the spawn if one cannot be removed.
+  Unlike materialisation this runs on BOTH launch paths, Linux and macOS: a Seatbelt deny
+  covers the named leaves, never an arbitrary `*.tmp` sibling, so an orphan would otherwise
+  stay readable on macOS forever. A removal is logged as a security event — the token in
+  that file was readable by anything running as this user, so it should be rotated.
+
+The agent-side file-tool gate (`security.is_sensitive_path`) fences all four paths
+independently of the OS mask, so the agent's own reach through tool calls is unchanged.
+
+### Why the state writers do not go through `atomic_write`
+
+`_write_state_staged_sync` stages its temp in the top-level staging directory and renames
+onto the target, rather than calling `atomic_write`. That is a deliberate fork of the
+secret-write chokepoint, recorded here so it stays a decision:
+
+* `atomic_write` stages in the TARGET's parent (`mkstemp(dir=path.parent)`), and its
+  pinned-parent path opens that temp through a directory descriptor precisely so the
+  location cannot be re-resolved. Staging elsewhere is not a parameter it has; adding
+  `staging_dir=` would have to either bypass that fence or duplicate it for a second
+  directory, on a primitive with many callers and a large contract (ACL preservation,
+  retry, fsync, restrict-on-error policy).
+* The one guard the fork must not shed is the #4381 planted-link refusal that
+  `restrict_to_owner=True` implied. It is not reimplemented: `atomic_write.refuse_linked_parent`
+  is the same private helper made public for exactly this caller class, and tests fail if
+  either call site drops it.
+* The cost is real and accepted: a future guard added inside `atomic_write` does not reach
+  this writer. #8797 would remove the reason for the fork entirely by moving state into one
+  masked directory, so `staging_dir=` is the right follow-up only if #8797 is declined.
 
 ## Routes
 

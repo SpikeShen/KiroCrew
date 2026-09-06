@@ -611,9 +611,14 @@ class TestMaskableDirsAreMaterializedBeforeTheSpawn:
             assert (crew_home / leaf).is_dir()
 
     def test_an_existing_directory_is_left_alone_and_not_reported(self, crew_home):
-        target = crew_home / "aws-control-staging"
-        target.mkdir(parents=True)
-        marker = target / "drive-preview-live"
+        # Pre-create EVERY precreate leaf, not just one: the invariant under test is
+        # "already there -> untouched and unreported", and reporting is per-leaf, so
+        # leaving a sibling absent would report that sibling and say nothing about this
+        # one. Iterating the tuple keeps it true as leaves are added, the way the two
+        # tests above already do.
+        for leaf in sandbox._CREW_PRECREATE_HIDDEN_DIR_LEAVES:
+            (crew_home / leaf).mkdir(parents=True)
+        marker = crew_home / "aws-control-staging" / "drive-preview-live"
         marker.mkdir()
 
         assert sandbox._materialize_maskable_dirs() == []
