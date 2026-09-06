@@ -9,7 +9,7 @@ import ChatMessageList from '../app-sdk/ChatMessageList'
 import { useChatScrollFollow } from '../app-sdk/useChatScrollFollow'
 import { EdgeFade, JumpToBottomButton } from '../app-sdk/ChatScrollChrome'
 import { createTranscriptRenderers } from '../pages/chat/transcriptRenderers'
-import ChatInput from './ChatInput'
+import ChatInput, { type ComposerBusyMode } from './ChatInput'
 import ErrorNotice from './ErrorNotice'
 import { Btn } from './ui'
 import ChatDropOverlay, { useChatFileDrop } from './ChatDropOverlay'
@@ -30,7 +30,7 @@ import { usePlanActionMutation, isPlanAction } from '../hooks/usePlanActionMutat
 import { useQueuedMessageActions, queuedSendStash } from '../hooks/useQueuedMessageActions'
 import { useListboxKeyboard } from '../hooks/useListboxKeyboard'
 import { useAppSelector, useAppDispatch, store } from '../store'
-import { PANE_HYDRATE_LIMIT, retireStatelessQuestion, captureStatelessCard, capturePendingAskId, confirmOptimisticSend, selectSlotMessages, selectSlotStreamState, selectComposerBusy, hydrateSlotMessages, appendSlotMessage, requestStop, setAgentSwitchNotice, pendingQuestionFor } from '../store/chatSlice'
+import { PANE_HYDRATE_LIMIT, retireStatelessQuestion, captureStatelessCard, capturePendingAskId, confirmOptimisticSend, resolveOptimisticSteer, selectSlotMessages, selectSlotStreamState, selectComposerBusy, hydrateSlotMessages, appendSlotMessage, requestStop, setAgentSwitchNotice, pendingQuestionFor } from '../store/chatSlice'
 import { deriveFollowUpOptions } from '../app-sdk/protocol'
 import { CONTENT_WIDTH, loadChatConfig, type ChatConfig } from '../pages/chat/ChatSettings'
 import { tryQuickSend } from '../lib/quickSend'
@@ -42,7 +42,7 @@ import { performAgentSlotSwitch } from '../lib/agentSwitch'
 import { api } from '../api/client'
 import { resolveAskAfterSend } from '../lib/resolveAskAfterSend'
 import { classifyDrop } from '../utils/dropClassify'
-import { serializeDirTokens, spliceDirTokens, VIDEO_EXT } from '../utils/fileTokens'
+import { prepareSendPayload, serializeDirTokens, spliceDirTokens, VIDEO_EXT } from '../utils/fileTokens'
 import { displayModel } from '../lib/model'
 
 
@@ -68,6 +68,7 @@ export default function ChatPane({
   agentLocked,
   frameless,
   followContentWidth,
+  busyMode = 'split',
 }: {
   slotKey: string
   focused?: boolean
@@ -96,6 +97,15 @@ export default function ChatPane({
    *  long transcripts keep the same user-configured measure as the main
    *  chat. */
   followContentWidth?: boolean
+  /** What the composer's send does while the slot is busy. Defaults to
+   *  `'split'` — the same Steer/Queue split button as the main chat, which
+   *  split-view (⌘D) panes keep: they are the main chat's own sessions seen
+   *  side by side. A host that presents a conversation with ONE named peer
+   *  (the Members page's DM thread) passes `'steer-only'`: no queue concept,
+   *  every send while the member is working goes straight into its running
+   *  turn. Decided by the host, never inferred here, so no pane changes
+   *  behaviour by accident. */
+  busyMode?: ComposerBusyMode
 }) {
   // One instance covers both dropdown filter inputs (never open at once).
   const dispatch = useAppDispatch()
@@ -411,6 +421,7 @@ export default function ChatPane({
   }, [uploadFiles])
   const { active: dragOver, dropTargetProps } = useChatFileDrop(handleDrop)
 
+
   /** Put a payload the server never accepted back into the composer.
    *
    *  APPEND, never replace and never DROP: a send is in flight for seconds and
@@ -437,27 +448,40 @@ export default function ChatPane({
    *  Component-scoped so BOTH failure sites in this pane speak: the composer's
    *  own send, and the question-card fallback, whose answer is destroyed
    *  outright by a swallowed failure because the card is already gone. */
-  const reportSendFailure = useCallback((reason?: string, status?: SendReceiptStatus) => {
+  const reportSendFailure = useCallback((reason?: string, status?: SendReceiptStatus, restored = true) => {
     dispatch(appendSlotMessage({
       slot: slotKey,
       message: {
         role: 'error',
-        // A reason-less transport failure states its cause (the shared core
-        // copy ChatEmbed and SideChat use) instead of a bare "Send failed";
-        // any other reason-less outcome keeps the generic line.
-        content: reason || (i18nT(status === 'transport-error'
-          ? 'pages.chatPage.send_failed_connection'
-          : 'pages.chatPage.send_failed') as string),
+        // A server reason is FRAMED, never shown bare: "slot agent mismatch"
+        // on its own reads as the agent erroring mid-work, not as "your
+        // message never went out" — and says nothing about what to do next.
+        // The frame names both, and says the draft is back when it is
+        // (`restored`; an option-chip send never consumed the composer, so
+        // that variant keeps the plain frame). A reason-less transport
+        // failure states its cause (the shared core copy ChatEmbed and
+        // SideChat use); any other reason-less outcome keeps the generic line.
+        content: reason
+          ? i18nT(restored ? 'pages.chatPage.send_failed_with_error_restored' : 'pages.chatPage.send_failed_with_error', { error: reason })
+          : i18nT(status === 'transport-error'
+            ? 'pages.chatPage.send_failed_connection'
+            : 'pages.chatPage.send_failed'),
         cls: '',
       },
     }))
   }, [dispatch, slotKey])
 
-  const doSend = useCallback((optionText?: string) => {
+  const doSend = useCallback((optionText?: string, steerNow?: boolean) => {
     // `optionText` mirrors ChatPage.send's first parameter: the follow-up
     // bar's direct-send gesture (double-click / split button) hands the option
     // label here so it bypasses the setInput race, superseding any composer
     // text exactly as ChatPage does with `optionText || inputRef.current`.
+    //
+    // `steerNow` mirrors ChatPage.send's third: "act on this now" for a slot
+    // that is busy only because background sub-agents are still running (the
+    // parent turn already ended, so there is no live turn to inject into). It
+    // asks the server to skip the hold that parks a message behind them and
+    // start a real turn instead of queueing. Same `/api/chat` flag as a steer.
     const text = (optionText || input).trim()
     if (!text && !pendingFiles.length) return
     // Capture the stateless card pending at ENTRY (before any state updates
@@ -514,7 +538,7 @@ export default function ChatPane({
     // message stayed on screen looking sent. `ChatPage` has always appended an
     // error row and handed the text back; the pane now does the same.
     const reportFailedSend = (reason?: string, status?: SendReceiptStatus) => {
-      reportSendFailure(reason, status)
+      reportSendFailure(reason, status, !optionText)
       // Only a composer send has anything to hand back: an option send never
       // consumed the draft (see the `!optionText` gate above), so restoring the
       // option label here would CLOBBER the preserved draft with text the user
@@ -529,12 +553,24 @@ export default function ChatPane({
     // `response-late` proves no refusal either; restoring either one here could
     // invite a retry that duplicates a turn already in flight, side effects
     // included, so the optimistic composer row stays pending.
-    void sendTurn({ message: llm, slot: slotKey, meta }).then((receipt) => {
+    void sendTurn({ message: llm, slot: slotKey, meta, ...(steerNow ? { steer: true } : {}) }).then((receipt) => {
       if (receipt.status === 'refused' || receipt.status === 'transport-error') {
         reportFailedSend(receipt.reason, receipt.status)
         return
       }
       if (receipt.status === 'unknown' || receipt.status === 'response-late') return
+      // A steer-flagged send the server neither queued nor injected started a
+      // turn: no `queue_push` or `steer_push` echo is coming, and the busy
+      // rule above skipped the optimistic bubble, so nothing represents the
+      // text. Append it now, addressed to the SENDING slot (ChatPage does the
+      // same, for the same reason). It goes in before the confirm below so
+      // the confirm retires exactly this row.
+      if (steerNow && busy && receipt.status === 'dispatched' && !(receipt.body as { steered?: boolean }).steered && (text || files.length)) {
+        dispatch(appendSlotMessage({
+          slot: slotKey,
+          message: { role: 'user', content: text, cls: 'msg msg-u', ts: new Date().toISOString(), meta },
+        }))
+      }
       // The receipt names the queue entry this send became: bind the
       // pre-send composer state to it so cancelling that card restores the
       // TYPED text and re-stages the files (issue #560). This matters MORE
@@ -566,6 +602,77 @@ export default function ChatPane({
       void resolveAskAfterSend(receipt.body, askAtSend, dispatch)
     })
   }, [input, pendingFiles, busy, slotKey, dispatch, restoreIntoComposer, reportSendFailure])
+
+  // Mid-turn steer: inject the composer content into the RUNNING turn instead
+  // of queueing behind it. The pane's counterpart to ChatPage.steer, on the
+  // same chat-core transport (`sendTurn` with the `steer` flag) — a steer is
+  // the same POST as a send, and the receipt is read the same way: `sendTurn`
+  // never rejects, so every outcome is a status, not an error callback.
+  //
+  // The optimistic bubble is minted `{ steer, optimistic, sendId }` and
+  // addressed to THIS slot; the store already reconciles a `steer_push` echo
+  // against a slot-scoped bubble by sendId (appendSlotMessage's steer branch),
+  // so no store change is needed for a second steer host.
+  //
+  // kiro-cli's steer channel is TEXT-ONLY, so attachments ride as ChatPage's
+  // steer sends them — inlined by prepareSendPayload (images as markdown, other
+  // files as `[attached_file N]` tokens) — not as this pane's usual meta.files.
+  const doSteer = useCallback(() => {
+    // Nothing to inject into: busy purely because background sub-agents are
+    // still running (the parent turn already ended). Same intent — act on
+    // this now — so start a real turn through the normal send path with the
+    // steer flag, leaving doSend owning the draft and bubble bookkeeping.
+    if (!running) { doSend(undefined, true); return }
+    const raw = input.trim()
+    const files = pendingFiles
+    // A steer cannot restore what it cleared on an empty payload, so refuse a
+    // payload of nothing (mirrors ChatPage.steer's `!raw && !files.length`).
+    if (!raw && !files.length) return
+    const { txt } = prepareSendPayload(raw, files)
+    const sendId = `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    dispatch(appendSlotMessage({
+      slot: slotKey,
+      message: { role: 'user', content: txt, cls: 'msg msg-u', ts: new Date().toISOString(), meta: { steer: true, optimistic: true, sendId } },
+    }))
+    // Cleared HERE (not in ChatInput) so text and attachments clear atomically.
+    setInput('')
+    setPendingFiles([])
+    void sendTurn({ message: txt, slot: slotKey, steer: true, meta: { sendId } }).then((receipt) => {
+      // Receipt policy, same rulings as ChatPage's steerMutation:
+      // - refused / transport-error: nothing was accepted. Drop the bubble
+      //   (left standing it would be a false third copy next to the error row
+      //   and the refilled composer), say so in this transcript, hand the
+      //   payload back.
+      if (receipt.status === 'refused' || receipt.status === 'transport-error') {
+        dispatch(resolveOptimisticSteer({ slot: slotKey, sendId, outcome: 'queued' }))
+        reportSendFailure(receipt.reason, receipt.status)
+        restoreIntoComposer(raw, files)
+        return
+      }
+      // - response-late: the deadline aborted the POST; delivery is
+      //   indeterminate. If the server's own echo already reconciled the bubble
+      //   the steer landed. Otherwise drop the bubble (standing, it would read
+      //   as delivered), hand the text back, and warn — a duplicate is visible
+      //   and deletable, a lost steer is not.
+      if (receipt.status === 'response-late') {
+        const bubble = selectSlotMessages(store.getState(), slotKey).find(m => m.role === 'user' && m.meta?.sendId === sendId)
+        if (bubble && !bubble.meta?.optimistic) return
+        dispatch(resolveOptimisticSteer({ slot: slotKey, sendId, outcome: 'queued' }))
+        restoreIntoComposer(raw, files)
+        // \u26A0 is NoticeCard's warn-tone selector (parseNotice).
+        dispatch(appendSlotMessage({ slot: slotKey, message: { role: 'notice', content: '\u26A0\uFE0F ' + i18nT('pages.chatPage.delivery_unconfirmed'), cls: '' } }))
+        return
+      }
+      // - unknown: a 2xx whose body would not parse. Accepted; an unreadable
+      //   body confirms nothing, so the bubble is left as is.
+      if (receipt.status === 'unknown') return
+      // - steered: the server injected it; the steer_push echo owns the row.
+      if ((receipt.body as { steered?: boolean }).steered) return
+      // - demoted: queued behind the turn (queue_push brings its own card) or
+      //   fell onto a fresh turn (the row is a plain user message).
+      dispatch(resolveOptimisticSteer({ slot: slotKey, sendId, outcome: receipt.status === 'queued' ? 'queued' : 'turn' }))
+    })
+  }, [running, doSend, input, pendingFiles, slotKey, dispatch, reportSendFailure, restoreIntoComposer])
 
   const onStop = useCallback(() => { dispatch(requestStop({ slotId: slotKey, force: false })) }, [dispatch, slotKey])
   // The same queue-card recipe the single-chat surface runs (#5891), owned once
@@ -608,8 +715,11 @@ export default function ChatPane({
       slot: slotKey,
       toolDisclosure,
       onToolDisclosureChange: setToolDisclosureFor,
+      // A steer-only surface has no steer/queue concept to explain, so a
+      // confirmed steer draws as an ordinary message: no badge, no tint.
+      hideSteerBadge: busyMode === 'steer-only',
     }),
-    [slotKey, toolDisclosure, setToolDisclosureFor],
+    [slotKey, toolDisclosure, setToolDisclosureFor, busyMode],
   )
 
   const ddInputCls = 'w-full px-2 py-1 text-[13px] font-body bg-bg border border-border rounded text-text outline-none focus-visible:border-accent'
@@ -753,6 +863,12 @@ export default function ChatPane({
         <SubagentProgressBar slot={slotKey} />
 
         <SubagentDeliveryProgress count={systemDeliveryCount} />
+        {/* Rendered on server state only. A `steer-only` host never ASKS for a
+            queue, so in normal operation this stays empty there; it is not
+            hidden by mode, because a message the server did park (a backend
+            without a steer channel, a mid-plan send) must stay visible and
+            cancellable — hiding real state is worse than showing a card the
+            surface did not intend. */}
         {queuedMessages.length > 0 && (
           <QueueStack messages={queuedMessages} onCancel={onCancelQueued} onInterrupt={onInterruptQueued} onEdit={onEditQueued} onReorder={onReorderQueued} pendingIds={queuePendingIds} />
         )}
@@ -810,6 +926,12 @@ export default function ChatPane({
           onSend={doSend}
           isRunning={busy}
           onStop={onStop}
+          // Steer path on the pane too (it was queue-only before): busy panes
+          // get the same mid-turn choice as the main chat, and a
+          // `steer-only` host gets a plain send that steers.
+          canSteer={busy}
+          onSteer={doSteer}
+          busyMode={busyMode}
           autoFocusKey={slotKey}
           agentName={paneAgentName}
           agentSource={installedAgents.find((a) => a.name === paneAgentName)?.source}
