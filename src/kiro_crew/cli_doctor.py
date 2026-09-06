@@ -353,9 +353,9 @@ def _os_fix_hint(mac: str, linux: str, windows: str | None = None) -> str:
     else Linux guidance).
 
     Without a Windows arm Windows would fall through to the Linux text, telling a
-    Windows user to ``pipx``/drop a static build in ``~/.local/bin``, neither of
-    which applies. When *windows* is omitted the Linux text is still used, so
-    callers only pass it where a Windows-specific remedy exists.
+    Windows user to ``pipx``/``brew``/``apt`` or to drop a build into a POSIX
+    directory, none of which applies. When *windows* is omitted the Linux text is
+    still used, so callers only pass it where a Windows-specific remedy exists.
     """
     if _plat.system() == "Darwin":
         return mac
@@ -3235,8 +3235,9 @@ def _doctor(platform_boot_error: "Exception | None" = None, bundle: bool = False
                 "               Fix: "
                 + _os_fix_hint(
                     "brew install ffmpeg",
-                    "drop a static ffmpeg build into ~/.local/bin "
-                    "(not in AL2023 repos; Kiro Crew auto-detects it)",
+                    "install ffmpeg into /usr/local/bin, or fetch a decoder "
+                    "from the dashboard (Settings -> Voice -> "
+                    "Speech-to-Text -> Download)",
                     windows="winget install Gyan.FFmpeg",
                 )
             )
