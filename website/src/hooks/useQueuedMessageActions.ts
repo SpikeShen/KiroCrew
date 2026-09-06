@@ -31,6 +31,35 @@ export interface QueuedSendRecord {
  *  three small strings bounded by queued sends per tab session. */
 export const queuedSendStash = new Map<string, QueuedSendRecord>()
 
+/** EMPTY records for OPTION sends whose receipt has NOT landed yet, keyed by
+ *  the send's own `sendId`. `queue_push` can beat the HTTP receipt, so a card
+ *  can be drawn -- and cancelled -- before `queuedSendStash` knows its queue
+ *  id; the cancel then falls to the content parser, which for an option send
+ *  (an escalation chip) appends the option label to the draft the person was
+ *  typing. A cancel that finds no queue-id record therefore looks here, by
+ *  wire text. Only option sends are registered, and their record is empty by
+ *  construction (`raw: ''`, no files -- the chip never consumed the composer),
+ *  so a wire-text collision between two in-flight sends can only ever
+ *  "restore" nothing: it can never hand back ANOTHER send's text or files.
+ *  Typed sends are deliberately NOT registered here: their pre-send state is
+ *  bound by queue id only (the sound key), exactly as before. The sender moves
+ *  the record under its queue id when the receipt names one, or drops it when
+ *  the send did not queue. */
+export const inFlightSendStash = new Map<string, QueuedSendRecord>()
+
+/** Consume the in-flight OPTION record whose wire text is `sent`, if any. A
+ *  record carrying text or files is never matched: the empty shape is the
+ *  invariant that makes content matching harmless. */
+export function takeInFlightSend(sent: string): QueuedSendRecord | undefined {
+  for (const [sendId, rec] of inFlightSendStash) {
+    if (rec.sent === sent && rec.raw === '' && rec.files.length === 0) {
+      inFlightSendStash.delete(sendId)
+      return rec
+    }
+  }
+  return undefined
+}
+
 /** The four queue-card callbacks `QueueStack` takes, plus the in-flight set it
  *  disables its controls from. */
 export interface QueuedMessageActions {
@@ -40,6 +69,11 @@ export interface QueuedMessageActions {
   onReorder: (queueId: string, direction: 'next' | 'later') => void
   /** Feed straight to `QueueStack`'s `pendingIds`. */
   pendingIds: ReadonlySet<string>
+  /**
+   * Queue ids the server confirmed cancelled (the DELETE resolved). Absence
+   * from the store is optimistic and says nothing; presence here does.
+   */
+  cancelledIds: ReadonlySet<string>
 }
 
 export interface QueuedMessageActionsOptions {
@@ -104,6 +138,13 @@ export function useQueuedMessageActions({
 }: QueuedMessageActionsOptions): QueuedMessageActions {
   const dispatch = useAppDispatch()
   const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(() => new Set())
+  // Queue ids whose cancel the server CONFIRMED (the DELETE resolved). The
+  // optimistic removal above cannot tell a consumer "this entry is gone" from
+  // "this entry is still queued behind a failed request" — they look the same
+  // in the store — so a consumer that must not act on an entry the server may
+  // still hold (the escalation card's send latch) reads this set instead.
+  // Additive: the optimistic contract itself is unchanged (item 1 of #5891).
+  const [cancelledIds, setCancelledIds] = useState<ReadonlySet<string>>(() => new Set())
 
   // Reads happen inside callbacks that must NOT be re-created when the queue
   // changes: `QueueStack` is memo-compared on callback identity, so a new
@@ -192,8 +233,11 @@ export function useQueuedMessageActions({
       // another tab's card, an edited entry — falls to the strict parser,
       // which claims only byte-exact round-trippable shapes and is never
       // worse than the verbatim restore this replaced.
-      const stashed = queuedSendStash.get(queueId)
+      let stashed = queuedSendStash.get(queueId)
       if (stashed) queuedSendStash.delete(queueId)
+      // No queue-id record yet: the receipt may still be in flight (see
+      // inFlightSendStash) -- the record then lives under its sendId.
+      if (!stashed) stashed = takeInFlightSend(msg.content)
       const { text, files } = stashed && stashed.sent === msg.content
         ? { text: stashed.raw, files: stashed.files }
         : restoreQueuedContent(msg.content)
@@ -201,7 +245,14 @@ export function useQueuedMessageActions({
     }
     // Optimistically remove the card; the WS echo is a no-op if already gone.
     dispatch(cancelQueuedMessage({ slot, queue_id: queueId }))
-    run(queueId, api.cancelQueuedMessage(slot, queueId))
+    const call = api.cancelQueuedMessage(slot, queueId)
+    // Only a resolved DELETE proves the entry is gone server-side; a rejected
+    // one stays silent here (see `run`) and the id never enters the set.
+    call.then(
+      () => setCancelledIds(prev => (prev.has(queueId) ? prev : new Set(prev).add(queueId))),
+      () => undefined,
+    )
+    run(queueId, call)
   }, [slot, dispatch, run])
 
   const onInterrupt = useCallback((queueId: string) => {
@@ -252,7 +303,7 @@ export function useQueuedMessageActions({
   }, [slot])
 
   return useMemo(
-    () => ({ onCancel, onInterrupt, onEdit, onReorder, pendingIds }),
-    [onCancel, onInterrupt, onEdit, onReorder, pendingIds],
+    () => ({ onCancel, onInterrupt, onEdit, onReorder, pendingIds, cancelledIds }),
+    [onCancel, onInterrupt, onEdit, onReorder, pendingIds, cancelledIds],
   )
 }

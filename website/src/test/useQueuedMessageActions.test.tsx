@@ -40,7 +40,7 @@ const apiMocks = vi.hoisted(() => ({
 }))
 vi.mock('../api/client', () => ({ api: apiMocks }))
 
-import { useQueuedMessageActions, queuedSendStash, type QueuedMessageActions } from '../hooks/useQueuedMessageActions'
+import { useQueuedMessageActions, queuedSendStash, inFlightSendStash, type QueuedMessageActions } from '../hooks/useQueuedMessageActions'
 
 const queued = (queueId: string, content: string): ChatMessage =>
   ({ role: 'queued', content, cls: 'msg msg-queued', ts: '', meta: { queueId } }) as ChatMessage
@@ -95,6 +95,7 @@ beforeEach(() => {
   // Module-level store: entries would otherwise leak across tests (and across
   // reused queue ids like 'q1'), making the suite order-dependent.
   queuedSendStash.clear()
+  inFlightSendStash.clear()
   for (const fn of Object.values(apiMocks)) fn.mockResolvedValue({ ok: true })
 })
 
@@ -108,6 +109,57 @@ describe('useQueuedMessageActions — cancel', () => {
     expect(apiMocks.cancelQueuedMessage).toHaveBeenCalledWith('chat-1', 'q1')
     // Optimistic: the card is gone without waiting for the WS echo.
     expect(queueIdsIn(store)).toEqual(['q2'])
+  })
+
+  it('an EMPTY stash record (an option send that never consumed the composer) restores nothing, not the option label', () => {
+    const restoreDraft = vi.fn()
+    queuedSendStash.set('q1', { raw: '', files: [], sent: 'run the tests' })
+    const { get } = renderActions({ restoreDraft })
+    act(() => { get().onCancel('q1') })
+    // The stash hit wins over the content parser, so the queued row's text
+    // (the escalation option) is NOT appended to the person's draft.
+    expect(restoreDraft).toHaveBeenCalledWith('', [])
+    expect(queuedSendStash.has('q1')).toBe(false)
+  })
+
+  it('a cancel that lands before the send receipt (queue_push first) consumes the in-flight record by wire text instead of parsing the row', () => {
+    const restoreDraft = vi.fn()
+    // The sender registered the record under its sendId; the receipt that
+    // would move it under 'q1' has not arrived, so queuedSendStash is empty.
+    inFlightSendStash.set('s-abc', { raw: '', files: [], sent: 'run the tests' })
+    const { get } = renderActions({ restoreDraft })
+    act(() => { get().onCancel('q1') })
+    expect(restoreDraft).toHaveBeenCalledWith('', [])
+    // Consumed: a later receipt for this send finds nothing to move.
+    expect(inFlightSendStash.size).toBe(0)
+  })
+
+  it('never matches an in-flight record that carries text or files -- a wire-text collision cannot hand back another send\u2019s attachments', () => {
+    const restoreDraft = vi.fn()
+    // Same wire text as the cancelled row, but this record belongs to a TYPED
+    // send with an attachment; the empty-shape invariant keeps it off limits.
+    inFlightSendStash.set('s-typed', { raw: 'run the tests', files: ['/tmp/other.pdf'], sent: 'run the tests' })
+    const { get } = renderActions({ restoreDraft })
+    act(() => { get().onCancel('q1') })
+    // Falls to the parser: the row's own text, no foreign files.
+    expect(restoreDraft).toHaveBeenCalledWith('run the tests', [])
+    expect(inFlightSendStash.has('s-typed')).toBe(true)
+  })
+
+  it('reports an id as cancelled only once the server confirmed the DELETE; a failed cancel never enters the set', async () => {
+    const { get } = renderActions({})
+    expect(get().cancelledIds.size).toBe(0)
+    act(() => { get().onCancel('q1') })
+    // Optimistic removal has happened, but the store cannot say whether the
+    // server agreed; the confirmation set stays empty until it does.
+    expect(get().cancelledIds.has('q1')).toBe(false)
+    await act(async () => { await Promise.resolve() })
+    expect(get().cancelledIds.has('q1')).toBe(true)
+    apiMocks.cancelQueuedMessage.mockRejectedValueOnce(new Error('offline'))
+    act(() => { get().onCancel('q2') })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(get().cancelledIds.has('q2')).toBe(false)
+    expect(get().cancelledIds.has('q1')).toBe(true)
   })
 
   it('restores the pre-send composer state from the queue-id stash — typed text AND files', () => {
