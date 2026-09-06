@@ -3236,8 +3236,8 @@ def _doctor(platform_boot_error: "Exception | None" = None, bundle: bool = False
                 + _os_fix_hint(
                     "brew install ffmpeg",
                     "install ffmpeg into /usr/local/bin, or fetch a decoder "
-                    "from the dashboard (Settings -> Voice -> "
-                    "Speech-to-Text -> Download)",
+                    "from the dashboard Speech-to-Text card "
+                    "(Settings > Voice, then Download now)",
                     windows="winget install Gyan.FFmpeg",
                 )
             )
