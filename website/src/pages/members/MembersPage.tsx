@@ -41,6 +41,8 @@ import { useAppDispatch, useAppSelector } from '../../store'
 import { markSlotRead } from '../../store/dashboardSlice'
 import CrewAvatar from '../../components/CrewAvatar'
 import ChatPane from '../../components/ChatPane'
+import SideChat from '../chat/SideChat'
+import { useSideChatDraft } from '../../chat-core/composer/sideChatDrafts'
 import DetailPanel from '../../components/DetailPanel'
 import ErrorBoundary from '../../components/ErrorBoundary'
 import { useIsMobile } from '../../hooks/useIsMobile'
@@ -147,6 +149,22 @@ export default function MembersPage() {
   const [drawerOpen, setDrawerOpen] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches,
   )
+  // What the drawer shows: the member's details (default), or the Side Chat
+  // for the member's thread — the isolated /side conversation the selection
+  // toolbar's "Ask" seeds. The Members page has no activity panel (the chat
+  // page's Side Chat home), so the drawer is where that surface lives here;
+  // the thread stays the thread, the aside is where you ask about it.
+  const [drawerView, setDrawerView] = useState<'details' | 'side'>('details')
+  const openMemberSideChat = useCallback(() => {
+    setDrawerView('side')
+    setDrawerOpen(true)
+  }, [])
+  const closeDrawer = useCallback(() => {
+    setDrawerOpen(false)
+    // Closing forgets the view: the header's Details toggle reopens details,
+    // never a stale Side Chat the user already dismissed.
+    setDrawerView('details')
+  }, [])
   // Live presence rides the already-subscribed WS `slots` frames — the roster
   // endpoint only fills the cold-start gap (its `running` is a snapshot).
   const liveSlots = useAppSelector((s) => s.dashboard.slots)
@@ -212,6 +230,9 @@ export default function MembersPage() {
     return q ? ordered.filter((m) => m.name.toLowerCase().includes(q)) : ordered
   }, [members, filter])
   const activeSlot = active ? slots[active.name] ?? '' : ''
+  // The member's unsent Side Chat draft, live from the chat-core store; it
+  // decides whether the details view offers a way back into the Side Chat.
+  const memberSideDraft = useSideChatDraft(activeSlot).text
   const activeError = active ? errors[active.name] ?? '' : ''
 
   // Sessions this member is driving: every live slot whose `created_by` is the
@@ -458,6 +479,10 @@ export default function MembersPage() {
   const openMember = useCallback(
     (m: MemberRosterRow) => {
       setActiveName(m.name)
+      // A Side Chat view belongs to the member it was asked about. Switching
+      // members returns the drawer to details rather than carrying the view
+      // over to a thread the user has not asked anything about yet.
+      setDrawerView('details')
       setErrors((prev) => {
         if (!(m.name in prev)) return prev
         const next = { ...prev }
@@ -764,7 +789,7 @@ export default function MembersPage() {
                   Edit lives inside the drawer: it is a rare, secondary
                   action, not a header-level peer of the drawer toggle. */}
               <button
-                onClick={() => setDrawerOpen((v) => !v)}
+                onClick={() => { if (drawerOpen) closeDrawer(); else setDrawerOpen(true) }}
                 className="flex items-center justify-center w-7 h-7 rounded-md transition-colors bg-transparent border-none shrink-0 text-muted hover:text-text hover:bg-bg-hover cursor-pointer"
                 aria-pressed={drawerOpen}
                 aria-controls="member-drawer"
@@ -788,7 +813,7 @@ export default function MembersPage() {
                       (transcript and composer both). The DM column is the
                       page's widest region, and an uncapped line length is
                       unreadable on wide screens. */}
-                  <ChatPane slotKey={activeSlot} agentLocked frameless followContentWidth />
+                  <ChatPane slotKey={activeSlot} agentLocked frameless followContentWidth openSideChat={openMemberSideChat} />
                 </ErrorBoundary>
               </div>
             ) : (
@@ -817,7 +842,25 @@ export default function MembersPage() {
           drag-resize is moot because the overlay spans a fixed 300px. */}
       <AnimatePresence>
         {active && drawerOpen && (() => {
-          const body = (
+          // Only the endpoint-confirmed slot (`activeSlot`, filled by
+          // POST /api/members/{slug}/thread) may host a Side Chat — never the
+          // roster's `slot_key`, which the thread opener can reject (a lossy-
+          // slug collision hands another crew's key). A question typed here
+          // goes to whatever slot the panel is bound to, so an unconfirmed key
+          // would be a silent cross-crew misroute. Same rule as the thread
+          // pane itself.
+          const showSide = drawerView === 'side' && !!activeSlot
+          const view = showSide ? (
+            /* The Side Chat for this member's thread. Same id as the details
+               body: the header's Details toggle controls the one drawer,
+               whichever view it shows. SideChat sizes itself as a flex column
+               (flex-1 / min-h-0) inside DetailPanel's noPadding body. */
+            <div id="member-drawer" data-testid="member-side-chat" aria-label={t('pages.chat.sidePanel.menu_side')} className="flex-1 min-h-0 flex flex-col">
+              <ErrorBoundary>
+                <SideChat slot={activeSlot} />
+              </ErrorBoundary>
+            </div>
+          ) : (
             /* Keeps the old aside's id: the roster header's Details toggle
                points here via aria-controls. */
             <div id="member-drawer" data-testid="member-drawer" aria-label={t('pages.membersPage.details')}>
@@ -1213,13 +1256,65 @@ export default function MembersPage() {
           </button>
             </div>
           )
+          /* The two views swap in place; a hard cut reads as "the card got
+             replaced by something else". A short crossfade keyed on the view
+             gives the eye the one beat it needs to read the header's new
+             title ("Side Chat" / the member) and the Details way back.
+             `mode="wait"` so the outgoing view fades before the incoming
+             one mounts — the two have different heights and a simultaneous
+             swap would jump. `initial={false}`: the drawer's own mount
+             animation is DetailPanel's; the first view must not fade in on
+             top of it. */
+          const body = (
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={showSide ? 'side' : 'details'}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.12, ease: 'linear' }}
+                className={showSide ? 'flex-1 min-h-0 flex flex-col' : undefined}
+              >
+                {view}
+              </motion.div>
+            </AnimatePresence>
+          )
           const panelProps = {
             icon: <CrewAvatar seed={active.name} avatar={active.avatar} size={22} />,
-            title: active.name,
-            onClose: () => setDrawerOpen(false),
+            // The Side Chat view names itself; identity stays on the avatar.
+            title: showSide ? t('pages.chat.sidePanel.menu_side') : active.name,
+            onClose: closeDrawer,
             initialWidth: DRAWER_DEFAULT,
             minWidth: DRAWER_MIN,
             storageKey: DRAWER_WIDTH_KEY,
+            // The Side Chat fills the body edge to edge (its own transcript
+            // padding and composer band); details keep the panel's padding.
+            noPadding: showSide,
+            // The way back and forth between the two views. From the Side
+            // Chat, "Details" returns to the member card. From the details,
+            // "Side Chat" is offered only while the member's Side Chat holds
+            // an unsent draft: the toolbar's Ask is how a Side Chat starts (it
+            // has a selection in hand), but a user who checked the details or
+            // closed the drawer mid-question must be able to return to what
+            // they were typing without re-selecting text — which would append
+            // a second quote onto it.
+            headerActions: showSide ? (
+              <button
+                onClick={() => setDrawerView('details')}
+                className="text-[12px] px-2 py-1 rounded-md bg-transparent border-none text-muted hover:text-text hover:bg-bg-hover cursor-pointer transition-colors"
+                data-testid="member-drawer-details"
+              >
+                {t('pages.membersPage.details')}
+              </button>
+            ) : activeSlot && memberSideDraft.trim() ? (
+              <button
+                onClick={() => setDrawerView('side')}
+                className="text-[12px] px-2 py-1 rounded-md bg-transparent border-none text-muted hover:text-text hover:bg-bg-hover cursor-pointer transition-colors"
+                data-testid="member-drawer-side-chat"
+              >
+                {t('pages.chat.sidePanel.menu_side')}
+              </button>
+            ) : undefined,
           }
           return isMobile ? (
             <motion.div

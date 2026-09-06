@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import reducer, {
   sseSideResult, sseSideQueue, sideReleaseConsumed, sideOptimisticAppend, sideOptimisticRollback,
@@ -22,6 +22,7 @@ vi.mock('../api/client', () => ({
 
 import SideChat from '../pages/chat/SideChat'
 import { api } from '../api/client'
+import { readSideChatDraft } from '../chat-core/composer/sideChatDrafts'
 
 // The composer blocks sends while the gateway reads as offline, so every
 // scene runs against a connected dashboard unless it tests the offline path.
@@ -287,6 +288,33 @@ describe('SideChat queue cards', () => {
 
     await waitFor(() => expect(screen.getByText('Could not update that queued question')).toBeInTheDocument())
     expect(store.getState().chat.slotSide[SLOT].queue?.[0].content).toBe('old')
+  })
+
+  it('an edit that fails after the panel was re-bound restores to the slot it was FOR, not the one shown', async () => {
+    // Same failure as above, but the host re-binds the panel (split view's Ask,
+    // a member switch) while the edit is in flight. A's wording must come back
+    // to A's draft — never be appended into B's.
+    const user = userEvent.setup()
+    let rejectEdit: (e: Error) => void = () => {}
+    vi.mocked(api.sideQueueEdit).mockImplementationOnce(() => new Promise((_, rej) => { rejectEdit = rej }))
+    const store = busyState({
+      queue: [{ id: 'q-1', content: 'old', ts: '2026-05-20T00:00:02Z', raw: true }],
+    })
+    const view = renderWithProviders(<SideChat slot={SLOT} />, { store })
+
+    await user.click(screen.getByLabelText('Edit queued message'))
+    await user.clear(screen.getByLabelText('Edit queued message'))
+    await user.type(screen.getByLabelText('Edit queued message'), 'new wording{Enter}')
+    await waitFor(() => expect(api.sideQueueEdit).toHaveBeenCalledWith(SLOT, 'q-1', 'new wording'))
+
+    view.rerender(<SideChat slot="other-slot" />)
+    const composer = () => screen.getByLabelText('Ask a side question') as HTMLTextAreaElement
+    await user.type(composer(), 'typing in B')
+
+    await act(async () => { rejectEdit(new Error('queue entry not found')); await Promise.resolve() })
+    await waitFor(() => expect(readSideChatDraft(SLOT)).toContain('new wording'))
+    expect(composer().value).toBe('typing in B')
+    expect(readSideChatDraft('other-slot')).toBe('typing in B')
   })
 })
 

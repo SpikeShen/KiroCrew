@@ -36,6 +36,9 @@ import { CONTENT_WIDTH, loadChatConfig, type ChatConfig } from '../pages/chat/Ch
 import { tryQuickSend } from '../lib/quickSend'
 import { mergeRecoveredDraft } from '../utils/chatDrafts'
 import { sendTurn, type SendReceiptStatus } from '../chat-core/transport/sendTurn'
+import { useSelectionQuoteAsk } from '../chat-core/composer/selectionActions'
+import FlyingQuote from './FlyingQuote'
+import { revealComposer } from '../pages/chat/composerFocus'
 import { triggerRefresh, updateSlot } from '../store/dashboardSlice'
 import { performSlotSwitch } from '../lib/slotSwitch'
 import { performAgentSlotSwitch } from '../lib/agentSwitch'
@@ -68,6 +71,7 @@ export default function ChatPane({
   agentLocked,
   frameless,
   followContentWidth,
+  openSideChat,
 }: {
   slotKey: string
   focused?: boolean
@@ -96,6 +100,12 @@ export default function ChatPane({
    *  long transcripts keep the same user-configured measure as the main
    *  chat. */
   followContentWidth?: boolean
+  /** Bring a Side Chat surface for this pane's slot on screen. The selection
+   *  toolbar offers "Ask" only when the host provides it: the pane owns its
+   *  composer (so Quote is always there) but no Side Chat of its own — the
+   *  split view's lives in the chat page's activity panel, the Members page's
+   *  in its detail drawer. Capability by omission, like `onOpenFull`. */
+  openSideChat?: (slot: string) => void
 }) {
   // One instance covers both dropdown filter inputs (never open at once).
   const dispatch = useAppDispatch()
@@ -612,6 +622,14 @@ export default function ChatPane({
     [slotKey, toolDisclosure, setToolDisclosureFor],
   )
 
+  // Quote / Ask on selected assistant text — the same chat-core seam the main
+  // chat uses (chat-core/composer/selectionActions), bound to THIS pane's
+  // composer and slot. Before this the pane's selection toolbar offered Copy
+  // only: the SDK's assistant row draws the actions the host hands it, and no
+  // host but ChatPage handed any.
+  const inputAreaRef = useRef<HTMLDivElement>(null)
+  const { onQuote, onAsk, quoteFlight, endQuoteFlight } = useSelectionQuoteAsk({ slot: slotKey, setInput, revealComposer, openSideChat })
+
   const ddInputCls = 'w-full px-2 py-1 text-[13px] font-body bg-bg border border-border rounded text-text outline-none focus-visible:border-accent'
 
   return (
@@ -722,7 +740,7 @@ export default function ChatPane({
               {i18nT('components.chatPane.earlier_messages_open_session')}
             </button>
           )}
-          <ChatMessageList messages={messages} running={running} renderers={renderers} hideCardOwnedOAuth={connectionsUiOn} />
+          <ChatMessageList messages={messages} running={running} renderers={renderers} hideCardOwnedOAuth={connectionsUiOn} onQuote={onQuote} onAsk={onAsk} />
           {/* The same working indicator the full chat page shows (the ghost-pose
               carousel, theme-swappable via themeBranding): a running turn in a
               pane — a member DM, a split pane — was otherwise invisible between
@@ -804,6 +822,11 @@ export default function ChatPane({
           onDismiss={() => setSwitchError('')}
         />
 
+        {/* Quote transit: the selection flies from where it was taken into this
+            pane's composer (the wrapper below is the landing target — same
+            shape as ChatPage's inputAreaRef). */}
+        {quoteFlight && <FlyingQuote text={quoteFlight.text} from={quoteFlight.from} targetRef={inputAreaRef} onComplete={endQuoteFlight} />}
+        <div ref={inputAreaRef} className="relative z-10">
         <ChatInput
           value={input}
           onChange={setInput}
@@ -887,6 +910,7 @@ export default function ChatPane({
           onDragOver={dropTargetProps.onDragOver}
           onDragLeave={dropTargetProps.onDragLeave}
         />
+        </div>
         </div>
 
         {/* Agent picker portal — anchored to the input-bar agent button. */}

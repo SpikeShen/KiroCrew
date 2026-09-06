@@ -50,6 +50,12 @@ export interface ChatMessageListProps {
    *  (#5400, #5434). */
   canTrust?: boolean
   onFileOpen?: (path: string, opts?: { line?: number; endLine?: number }) => void
+  /** Selection actions offered on assistant text, next to Copy. Host
+   *  capabilities, not list behaviour: Quote needs the host's composer, Ask
+   *  needs a Side Chat surface the host can bring on screen. Either absent
+   *  hides its action (see chat-core/composer/selectionActions). */
+  onQuote?: (text: string, rect: DOMRect) => void
+  onAsk?: (text: string) => void
   /** Optional host-injected renderer for tool messages (role 'tool'/'tool_call'/
    *  'tool_result'). Lets a Redux-connected host (e.g. the dashboard's split-view
    *  ChatPane) render the full slot-aware ToolCallLine while this component stays
@@ -81,6 +87,8 @@ const ChatMessageList = memo(function ChatMessageList({
   onApproveBatch,
   canTrust,
   onFileOpen,
+  onQuote,
+  onAsk,
   renderTool,
   hideCardOwnedOAuth = false,
   renderers,
@@ -186,6 +194,8 @@ const ChatMessageList = memo(function ChatMessageList({
       running,
       key,
       onFileOpen,
+      onQuote,
+      onAsk,
       hideCardOwnedOAuth,
       autoDeniedIds,
       renderTool,
@@ -193,7 +203,7 @@ const ChatMessageList = memo(function ChatMessageList({
       row,
     }
     return entry.render(m, ctx)
-  }, [messages, running, contentWidth, onFileOpen, renderTool, autoDeniedIds, hideCardOwnedOAuth, activeRenderers])
+  }, [messages, running, contentWidth, onFileOpen, onQuote, onAsk, renderTool, autoDeniedIds, hideCardOwnedOAuth, activeRenderers])
 
 
   // Render a TurnItem (single or group)
