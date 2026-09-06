@@ -103,6 +103,7 @@ from kiro_crew.resource_status import inject_xdist_auto_cap
 from kiro_crew.sandbox import (
     RLIMIT_PROFILE_SESSION_HOST,
     BoundWorkspaceMismatch,
+    _forward_ssh_auth_sock,
     assert_voice_runtime_outside_agent_workspace,
     bind_voice_safe_agent_workspace_async,
     cgroup_scope_argv,
@@ -265,9 +266,7 @@ def _sanitize_progress_name(name: str) -> str:
     """
     scrubbed, _ = redact_exfiltration_urls(name)
     scrubbed, _ = redact_credentials(scrubbed)
-    return _strip_unprintable(" ".join(scrubbed.split()))[
-        :_MCP_PROGRESS_NAME_LEN_CAP
-    ]
+    return _strip_unprintable(" ".join(scrubbed.split()))[:_MCP_PROGRESS_NAME_LEN_CAP]
 
 
 def _capped_names(names: list[str]) -> str:
@@ -1218,10 +1217,15 @@ class AcpRuntime:
         # have Crew's seatbelt skipped in favour of an internal sandbox that never
         # starts. KAS is a Node process with no internal sandbox, so it takes
         # Crew's seatbelt directly, and so does every harness added later.
+        # Issue #8104: resolve the SSH_AUTH_SOCK forward opt-in off-loop ONCE
+        # (config read) and pass it to both the sandbox wrap and the parent scrub
+        # below, so neither reads config on the loop. Scoped to this agent spawn.
+        forward_ssh_auth_sock = await asyncio.to_thread(_forward_ssh_auth_sock)
         argv, self._sandbox_cleanup = await wrap_argv_async(
             argv,
             mode=self._sandbox_mode,
             strip_python_env=True,
+            forward_ssh_auth_sock=forward_ssh_auth_sock,
             is_kiro_cli=self._acp_backend in ACP_BACKENDS_INTERNAL_SANDBOX,
             _prepare=wrap_argv,
         )
@@ -1277,7 +1281,7 @@ class AcpRuntime:
         # CLI's internal sandbox without a POSIX `env -u` wrapper. Do it after
         # credential-pointer/API-key resolution so no resolver can reintroduce a
         # denied variable; KIRO_API_KEY itself is intentionally not denied.
-        env = scrub_agent_subprocess_env(env)
+        env = scrub_agent_subprocess_env(env, forward_ssh_auth_sock=forward_ssh_auth_sock)
         # Positive-identity marker for the orphan sweep: kiro-cli and every MCP
         # server it spawns inherit this, so escaped launcher trees (``npx
         # @playwright/mcp`` -> node) are identifiable as ours.
@@ -1294,11 +1298,7 @@ class AcpRuntime:
         env.update(browser_env)
         if browser_env:
             lifecycle_env = {**os.environ, **browser_env}
-            env.update(
-                await self._to_thread_guarding_sandbox(
-                    browser_socket_env, lifecycle_env
-                )
-            )
+            env.update(await self._to_thread_guarding_sandbox(browser_socket_env, lifecycle_env))
         # Per-process scratch containment: the agent's temp AND its
         # prompt-guided work products land in an owned directory instead of
         # the shared system temp dir. Allocated off-loop (mkdir + config read)
@@ -1688,6 +1688,7 @@ class AcpRuntime:
         runtime dead resolves every pending wait instead of leaving the remote
         requester unanswered indefinitely.
         """
+
         def _deny() -> bool:
             """Refuse admission, recording the decision first.
 
@@ -1806,9 +1807,7 @@ class AcpRuntime:
         # Bound the redaction input (backend-controlled) BEFORE the regex
         # passes, generously above the display cap so a clipped secret
         # cannot straddle the boundary the display truncation makes.
-        title = (
-            redact_text(str(raw_title)[:4096])[:120] if raw_title else "<unknown>"
-        )
+        title = redact_text(str(raw_title)[:4096])[:120] if raw_title else "<unknown>"
         logger.warning(
             "auto-rejected permission request id=%s for session %s "
             "(tool: %s, reason: %s): no surface on this client can answer it "
@@ -2195,9 +2194,7 @@ class AcpRuntime:
                         # prompt's drain, so a background child's request
                         # would sit unanswered — the original hang with extra
                         # steps. Answer it fail-closed NOW instead.
-                        _owner_turn_active = (
-                            self._subagent_owner in self._turn_active_sessions
-                        )
+                        _owner_turn_active = self._subagent_owner in self._turn_active_sessions
                         if (
                             msg.id is not None
                             and msg.is_method(METHOD_REQUEST_PERMISSION)
@@ -2231,12 +2228,8 @@ class AcpRuntime:
                             # request that is neither routed nor answered
                             # leaves its crew waiting on a prompt nobody can
                             # see.
-                            if msg.id is not None and msg.is_method(
-                                METHOD_REQUEST_PERMISSION
-                            ):
-                                emit_counter(
-                                    CHILD_PERMISSION_ROUTED, {"surface": "runtime"}
-                                )
+                            if msg.id is not None and msg.is_method(METHOD_REQUEST_PERMISSION):
+                                emit_counter(CHILD_PERMISSION_ROUTED, {"surface": "runtime"})
                             await next(iter(self._session_queues.values())).put(msg)
                     elif msg.id is not None and msg.is_method(METHOD_REQUEST_PERMISSION):
                         # Unannounced or ambiguous: nobody on this client can
@@ -2289,9 +2282,7 @@ class AcpRuntime:
                     if len(self._answer_tasks) >= self._max_answer_tasks:
                         self._note_dropped_frame(_DROP_NO_SESSION, msg.method)
                         continue
-                    _t = asyncio.ensure_future(
-                        self._answer_ownerless_request(msg.id, msg.method)
-                    )
+                    _t = asyncio.ensure_future(self._answer_ownerless_request(msg.id, msg.method))
                     self._answer_tasks.add(_t)
                     _t.add_done_callback(self._answer_tasks.discard)
                     continue
@@ -2330,9 +2321,7 @@ class AcpRuntime:
             # accounted for instead of vanishing with the task.
             self._flush_dropped_frames()
 
-    async def _answer_ownerless_request(
-        self, request_id: int | str, method: str
-    ) -> None:
+    async def _answer_ownerless_request(self, request_id: int | str, method: str) -> None:
         """Answer a server→client request that names no session with -32601.
 
         Runs OFF the reader loop (same shape as the KAS auth callback) so a
@@ -2347,9 +2336,7 @@ class AcpRuntime:
             request_id,
         )
         try:
-            await self.send_error(
-                request_id, _JSONRPC_METHOD_NOT_FOUND, "Method not found"
-            )
+            await self.send_error(request_id, _JSONRPC_METHOD_NOT_FOUND, "Method not found")
         except AcpRuntimeDead:
             pass
 
@@ -2666,9 +2653,7 @@ class AcpRuntime:
                 # dashboard banner applies before it lands in an exception.
                 err, _ = redact_exfiltration_urls(str(params.get("error") or ""))
                 err, _ = redact_credentials(err)
-                err = _strip_unprintable(" ".join(err.split()))[
-                    :_MCP_PROGRESS_ERROR_CAP
-                ]
+                err = _strip_unprintable(" ".join(err.split()))[:_MCP_PROGRESS_ERROR_CAP]
                 if name not in failed:
                     failed.append(name)
                 if err:
@@ -2686,9 +2671,7 @@ class AcpRuntime:
             # len(reported) can exceed the denominator -- "2/1 reported". The
             # out-of-roster servers still appear by name in the failed and
             # awaiting-authorization buckets, where naming them is the point.
-            parts.append(
-                f"{len(reported & set(roster))}/{len(roster)} MCP server(s) reported"
-            )
+            parts.append(f"{len(reported & set(roster))}/{len(roster)} MCP server(s) reported")
             silent = [n for n in roster if n not in reported]
             if silent:
                 parts.append(f"no report from {_capped_names(silent)}")
@@ -2799,8 +2782,7 @@ class AcpRuntime:
                     # server twice (the injection still wins) rather than
                     # withholding one that nothing else will supply.
                     logger.debug(
-                        "stubbed-server lookup failed for %r; projecting every "
-                        "declared server",
+                        "stubbed-server lookup failed for %r; projecting every " "declared server",
                         agent,
                         exc_info=True,
                     )
@@ -2829,9 +2811,7 @@ class AcpRuntime:
                 # Fail loud: continuing would create a session on KAS's own default
                 # mode, which for a restricted agent means running a BROADER agent
                 # than the caller asked for.
-                raise AcpRuntimeError(
-                    f"cannot project agent {agent!r} onto KAS: {exc}"
-                ) from exc
+                raise AcpRuntimeError(f"cannot project agent {agent!r} onto KAS: {exc}") from exc
         return None
 
     async def _session_start_budget(self) -> float:
@@ -2845,9 +2825,7 @@ class AcpRuntime:
         snapshot semantics as ``watchdog.*`` in session_handle.py).
         """
         if self._session_start_timeout is None:
-            self._session_start_timeout = await asyncio.to_thread(
-                _resolve_session_start_timeout
-            )
+            self._session_start_timeout = await asyncio.to_thread(_resolve_session_start_timeout)
         return self._session_start_timeout
 
     async def create_session(
@@ -2893,9 +2871,9 @@ class AcpRuntime:
             if member_entry is not None:
                 # Session-level entries outrank same-named spec entries, so drop
                 # any stub for the same server rather than registering it twice.
-                mcp_servers = [
-                    e for e in mcp_servers if e.get("name") != member_entry["name"]
-                ] + [member_entry]
+                mcp_servers = [e for e in mcp_servers if e.get("name") != member_entry["name"]] + [
+                    member_entry
+                ]
             else:
                 logger.warning(
                     "member session %s: dashboard server unresolved — the DM "
@@ -2924,9 +2902,7 @@ class AcpRuntime:
         self._session_inits_in_flight += 1
         session_id = ""
         try:
-            resp = await self._send_and_await(
-                METHOD_SESSION_NEW, params, timeout=budget
-            )
+            resp = await self._send_and_await(METHOD_SESSION_NEW, params, timeout=budget)
             session_id = str(resp.get("sessionId") or "")
             if not session_id:
                 raise AcpRuntimeError(f"session/new did not return sessionId: {resp}")
@@ -3071,9 +3047,7 @@ class AcpRuntime:
                 return list(self._entitlement_probe_result)
             if not self._initialized or self._dead or self._process is None:
                 return []
-            params = build_session_new_params(
-                await self._session_work_dir(), mcp_servers=[]
-            )
+            params = build_session_new_params(await self._session_work_dir(), mcp_servers=[])
             session_id = ""
             self._session_inits_in_flight += 1
             try:
@@ -3154,9 +3128,9 @@ class AcpRuntime:
                 member_dispatch_session_server, member_session_key
             )
             if member_entry is not None:
-                mcp_servers = [
-                    e for e in mcp_servers if e.get("name") != member_entry["name"]
-                ] + [member_entry]
+                mcp_servers = [e for e in mcp_servers if e.get("name") != member_entry["name"]] + [
+                    member_entry
+                ]
             else:
                 logger.warning(
                     "member session %s: dashboard server unresolved on resume — "
@@ -3212,16 +3186,12 @@ class AcpRuntime:
             # staging in _reader_loop, closed by _finish_session_init; see
             # docs/system-specs/modules/acp-client.md "loading a session
             # triggers MCP re-initialization") — so it gets the same budget.
-            resp = await self._send_and_await(
-                METHOD_SESSION_LOAD, load_params, timeout=budget
-            )
+            resp = await self._send_and_await(METHOD_SESSION_LOAD, load_params, timeout=budget)
 
             # A genuine resume echoes "modes" in the response (same signal AcpClient
             # keys on). Anything else means load did not actually restore state.
             if "modes" not in resp:
-                raise AcpRuntimeError(
-                    f"session/load did not resume session {resume_sid}: {resp}"
-                )
+                raise AcpRuntimeError(f"session/load did not resume session {resume_sid}: {resp}")
             loaded_session_id = resume_sid
         except AcpRequestTimeout as exc:
             # Read the staged MCP reports before the finally below clears them.
