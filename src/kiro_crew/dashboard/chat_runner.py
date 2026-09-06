@@ -5702,6 +5702,14 @@ async def _run_chat(
     _prompt_depth: int = 0,
     _synthetic_payload: bool = False,
     _directive_user_origin: bool = False,
+    # This turn is the delivered wake of a nudge/monitor loop bound to THIS slot
+    # (set only by ``GatewayOrchestrator._fire_dashboard_nudge``). It is the
+    # second producer the session-directive consumer admits as "the session's
+    # own" for the crew/member self-arm rule: a member's loop firing on the
+    # member's slot is the member keeping itself awake, and the arm/re-arm it
+    # issues from inside that wake is its own act. Cron, app and sub-agent
+    # injections never set it.
+    _directive_self_wake: bool = False,
     regenerate_hint: str = "",
     _on_consumed: "Callable[[bool], None] | None" = None,
     _on_irreversibly_consumed: "Callable[[], Awaitable[None] | None] | None" = None,
@@ -6325,6 +6333,7 @@ async def _run_chat(
                     expanded,
                     _prompt_depth=1,
                     _directive_user_origin=_directive_user_origin,
+                    _directive_self_wake=_directive_self_wake,
                 )
             elif status == "blocked":
                 sel().log_tool_invocation(
@@ -8057,6 +8066,7 @@ async def _run_chat(
                             str(_oob.get("kind") or ""),
                             dict(_oob.get("args") or {}),
                             producer_is_user_facing=_directive_user_origin,
+                            producer_is_self_wake=_directive_self_wake,
                         )
                         logger.info(
                             "session-directive applied OUT OF BAND for %s "
@@ -8239,6 +8249,7 @@ async def _run_chat(
                                     _dir_tool,
                                     _dir_args,
                                     producer_is_user_facing=_directive_user_origin,
+                                    producer_is_self_wake=_directive_self_wake,
                                 )
                             )
                             _dir_consumed_out[event.tool_call_id] = _out
