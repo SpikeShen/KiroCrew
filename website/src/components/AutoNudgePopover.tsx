@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, Goal, X } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
@@ -30,6 +30,10 @@ interface Props {
    * cycle fires, and a pulsing chip would claim active work for that whole gap.
    */
   interrupted?: boolean
+  /** Shared composer trigger supplied by the structured-monitor compatibility shell. */
+  trigger?: ReactNode
+  /** Structured body supplied by that shell; omitted to render the legacy editor. */
+  content?: ReactNode
 }
 
 const DEFAULT_MSG = `Your north star is in north_star.md, roadmap in roadmap.md, tasks in tasks.md. Pick the single highest-leverage next step toward the goal and execute it. Update tasks.md. Post a blocker ONCE if genuinely stuck. To halt the loop, create {{STOP_FILE}}`
@@ -42,7 +46,7 @@ interface SlotWatch {
   next_run_ts: number | null
 }
 
-export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, onChange, onBackToBoundedMonitor, writeDisabled = false, interrupted = false }: Props) {
+export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, onChange, onBackToBoundedMonitor, writeDisabled = false, interrupted = false, trigger, content }: Props) {
   // `||` (not `??`) is deliberate on the loop tier: it preserves the fallback
   // so a loop with idle_secs/max_cycles of 0 or an empty message still shows
   // the 60 / 0 / default template rather than a bare 0 / "".
@@ -67,7 +71,7 @@ export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, on
   const { data: cronJobs, isError: watchesFailed, refetch: refetchWatches } = useQuery({
     queryKey: ['cron-jobs'],
     queryFn: () => api.crons().then(r => r.jobs || []),
-    enabled: open,
+    enabled: open && content === undefined,
   })
 
   const watches: SlotWatch[] = useMemo(() => {
@@ -244,6 +248,7 @@ export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, on
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
+      {trigger ? <PopoverTrigger asChild>{trigger}</PopoverTrigger> : (
       <PopoverTrigger asChild>
         <button
           className={`h-8 px-2 rounded-lg text-[12px] font-mono flex items-center gap-1 cursor-pointer transition-all bg-transparent border-none shrink-0 whitespace-nowrap ${
@@ -264,7 +269,8 @@ export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, on
           {loop?.active && loop.cycle_count > 0 ? cycleText : null}
         </button>
       </PopoverTrigger>
-      <PopoverContent
+      )}
+      {content ?? <PopoverContent
         side="top"
         align="start"
         className="w-[min(calc(100vw-1rem),26.25rem)] max-h-[min(80vh,42rem)] overflow-y-auto p-4 text-[12px]"
@@ -412,7 +418,7 @@ export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, on
             {loop ? i18nT('components.autoNudgePopover.save') : i18nT('components.autoNudgePopover.start_loop')}
           </button>
         </div>
-      </PopoverContent>
+      </PopoverContent>}
     </Popover>
   )
 }

@@ -49,15 +49,16 @@ function renderPopover(
   onChange = vi.fn(),
   creationReady = true,
   sessionMode = '',
+  onOpenChange = vi.fn(),
 ) {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
-  const props = (next: AutomationRecord | null, slotKey = 'chat-1') => (
+  const props = (next: AutomationRecord | null, slotKey = 'chat-1', open = true) => (
     <QueryClientProvider client={client}>
       <SessionAutomationPopover
         slotKey={slotKey}
         automation={next}
-        open
-        onOpenChange={() => {}}
+        open={open}
+        onOpenChange={onOpenChange}
         onChange={onChange}
         creationReady={creationReady}
         sessionMode={sessionMode}
@@ -68,9 +69,10 @@ function renderPopover(
   return {
     client,
     onChange,
+    onOpenChange,
     ...view,
-    rerenderAutomation: (next: AutomationRecord | null, slotKey?: string) => (
-      view.rerender(props(next, slotKey))
+    rerenderAutomation: (next: AutomationRecord | null, slotKey?: string, open?: boolean) => (
+      view.rerender(props(next, slotKey, open))
     ),
   }
 }
@@ -378,6 +380,52 @@ describe('SessionAutomationPopover', () => {
     expect(instructions).toBeDisabled()
   })
 
+  it('keeps the popover open while a save is pending', async () => {
+    ;(api.monitorUpdate as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}))
+    const onOpenChange = vi.fn()
+    renderPopover(activeMonitor, vi.fn(), true, '', onOpenChange)
+
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Instructions for the agent when it wakes' }),
+      { target: { value: 'Address the latest review.' } },
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(api.monitorUpdate).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
+  it('retains a pending draft and its late error for the originating slot', async () => {
+    let rejectUpdate!: (error: Error) => void
+    ;(api.monitorUpdate as ReturnType<typeof vi.fn>).mockReturnValue(new Promise((_, reject) => {
+      rejectUpdate = reject
+    }))
+    const { rerenderAutomation } = renderPopover(activeMonitor)
+    const submitted = 'Address the latest review before reporting.'
+
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Instructions for the agent when it wakes' }),
+      { target: { value: submitted } },
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(api.monitorUpdate).toHaveBeenCalled())
+
+    rerenderAutomation({ ...activeMonitor, id: 'monitor-2', slotKey: 'chat-2' }, 'chat-2', false)
+    await act(async () => {
+      rejectUpdate(new Error('offline'))
+      await Promise.resolve()
+    })
+    rerenderAutomation(activeMonitor, 'chat-1', true)
+
+    expect(screen.getByRole('textbox', {
+      name: 'Instructions for the agent when it wakes',
+    })).toHaveValue(submitted)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The monitor request failed. Try again.',
+    )
+  })
+
   it('does not overwrite a newer structured monitor with a delayed legacy response', async () => {
     let resolveFetch!: (value: Response) => void
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => {
@@ -541,6 +589,7 @@ describe('SessionAutomationPopover', () => {
 
   it('offers the old costly loop explicitly without changing zero-unlimited semantics', () => {
     renderPopover(null)
+    const trigger = screen.getByRole('button', { name: 'Set up a bounded monitor' })
     fireEvent.click(screen.getByRole('button', { name: 'Use legacy goal loop (costly)' }))
 
     const notice = screen.getByText(
@@ -556,6 +605,7 @@ describe('SessionAutomationPopover', () => {
     )
     expect(maxCycles).toHaveValue(0)
     expect(maxCycles.parentElement?.parentElement).toHaveClass('flex-col', 'sm:flex-row')
+    expect(trigger).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to bounded monitor' }))
     expect(screen.getByRole('textbox', { name: 'Pull request URL' })).toBeInTheDocument()
