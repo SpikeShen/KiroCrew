@@ -16365,7 +16365,10 @@ class TestEmptyResponseRetry:
             patch.object(_ChatSlot, "queue_insert", spy),
             patch("kiro_crew.dashboard.chat_runner.save_slot_off_loop") as mock_save,
             patch("kiro_crew.dashboard.chat_runner._maybe_consolidate") as mock_consolidate,
-            patch("kiro_crew.dashboard.chat_runner._flush_file_changes") as mock_flush,
+            patch(
+                "kiro_crew.dashboard.chat_runner._flush_file_changes_off_loop",
+                new=AsyncMock(),
+            ) as mock_flush,
             patch(
                 "kiro_crew.dashboard.chat_runner._start_next_queued_turn",
                 new=AsyncMock(return_value=False),
@@ -16403,12 +16406,18 @@ class TestEmptyResponseRetry:
         mock_save.assert_not_called()
         mock_consolidate.assert_not_called()
         state.sessions.record_success.assert_not_called()
-        # _flush_file_changes is intentionally NOT skipped: the try-body call (inside
-        # the `if not _retrying_empty` guard) is skipped, but the finally block calls
-        # it once unconditionally ("ensure file changes always surface, even on
+        # The flush is intentionally NOT skipped: the try-body call (inside the
+        # `if not _retrying_empty` guard) is skipped, but the finally block calls it
+        # once unconditionally ("ensure file changes always surface, even on
         # cancel/error"). Scope the assertion to this slot because finalization of a
         # task created by another test can run while this module-level function is
         # patched and must not change the behavior observed for this turn.
+        #
+        # Pinned on `_flush_file_changes_off_loop`, not the sync `_flush_file_changes`
+        # it used to name: the read and difflib pass now run in a worker thread, so
+        # the turn awaits that wrapper instead of blocking the gateway's one event
+        # loop on a multi-megabyte read. The contract this asserts — exactly one
+        # flush for this slot, from the finally — is unchanged.
         own_flushes = [
             mock_call for mock_call in mock_flush.call_args_list if mock_call.args == (slot,)
         ]

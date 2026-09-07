@@ -1294,7 +1294,13 @@ _MAX_SNAPSHOT = 200_000  # cap per-file snapshot to bound message meta size
 # this size the stored snapshot is truncated to _MAX_SNAPSHOT anyway, so
 # reconstruction declines instead of stalling the loop on a huge file.
 _MAX_RECONSTRUCT_BYTES = 2_000_000
-
+# How many FULL pre-edit bodies may be held on one turn's accumulator at once.
+# Each is up to _MAX_RECONSTRUCT_BYTES and lives until the turn flushes, so an
+# agent looping edits over large files would otherwise grow the gateway's memory
+# without bound. The flush keeps only the FIRST before per path, so the practical
+# ceiling is one per distinct file; this bounds the pathological case where a turn
+# touches very many large files. 16 x 2 MiB = 32 MiB worst case.
+_MAX_RETAINED_FULL_BODIES = 16
 # Poisoned-conversation escalation threshold: number of CONSECUTIVE turn
 # cycles that must each exhaust the full pre-stream transient-5xx ladder
 # (TRANSIENT_RETRIES + 1 attempts, zero output) before the terminal error
@@ -1342,6 +1348,35 @@ def _truncate_snapshot(content: str) -> str:
     return content
 
 
+def _retain_file_snapshot(slot: "_ChatSlot", snapshot: dict) -> None:
+    """Append a tool event's snapshot, keeping retained FULL bodies bounded.
+
+    ``before_full`` holds a whole pre-edit body so the flush can diff past the
+    capped prefix, and it lives on the accumulator until the turn ends. Appending
+    it blindly meant N edits to one large file retained N copies -- an agent
+    looping over a 2 MiB file could grow the gateway's memory without bound, and
+    every one of those copies but the first is waste, because the flush keeps only
+    the FIRST before per path.
+
+    So: drop the full body when this path already has one retained, and stop
+    retaining new ones once the total in flight reaches
+    :data:`_MAX_RETAINED_FULL_BODIES`. The capped ``content`` is always kept, so a
+    dropped full body costs the patch for that path, never the row itself.
+    """
+    changes = getattr(slot, "_file_changes", None)
+    if not isinstance(changes, list):
+        return
+    if isinstance(snapshot.get("before_full"), str):
+        path = snapshot.get("path")
+        retained = [c for c in changes if isinstance(c, dict) and "before_full" in c]
+        if (
+            any(c.get("path") == path for c in retained)
+            or len(retained) >= _MAX_RETAINED_FULL_BODIES
+        ):
+            snapshot = {k: v for k, v in snapshot.items() if k != "before_full"}
+    changes.append(snapshot)
+
+
 def _before_entry(path: str, full: str) -> dict:
     """The capped before-snapshot, plus the full text when the cap bit.
 
@@ -1356,51 +1391,121 @@ def _before_entry(path: str, full: str) -> dict:
     return {"path": path, "content": capped, "before_full": full}
 
 
-def _safe_read_snapshot_raw(path: str) -> str | None:
-    """Read a file's FULL content for snapshot purposes, refusing sensitive paths.
+def _read_snapshot_bounded(path: str) -> tuple[str | None, bool]:
+    """Read a file for snapshot purposes. Returns ``(text, complete)``.
 
-    Routes path validation through ``hooks.validate_file_path`` (the same
-    helper hooks.py uses for its own file ops) so the sensitive-path check
-    has a single enforcement point — if the security policy gains additional
-    checks in the future, both the LLM-tool intercept layer and the snapshot
-    layer pick them up automatically.
+    ``complete`` is False when the body was longer than the ceiling and the text
+    is a prefix. That distinction is the whole point of the tuple: "the file is
+    gone" and "the file is big" must not answer the same way. A caller that
+    collapses them stores an empty after-state for a file that is merely large,
+    and the transcript then shows an ordinary edit as a wholesale deletion.
 
-    Untruncated: the caller decides whether it needs the capped prefix (for
-    message meta) or the whole text (to compute a patch that a capped prefix
-    could not express). Returns None if the path is sensitive / not a regular
-    file / unreadable.
+    Path validation routes through ``hooks.validate_file_path`` (the same helper
+    hooks.py uses for its own file ops) so the sensitive-path check has a single
+    enforcement point. ``(None, False)`` means sensitive / not a regular file /
+    unreadable — genuinely no content, as opposed to a truncated body.
     """
     try:
         validated = validate_file_path(path)
         if validated is None:
-            return None
+            return None, False
         p = Path(validated)
         if not p.is_file():
-            return None
-        # BOUND the read before it happens. This reader exists to feed a full-body
-        # diff, so it is the one snapshot path that is NOT capped by
-        # _MAX_SNAPSHOT — and an agent can write a file of any size. Without a
-        # ceiling the read and the difflib pass below it are both unbounded on the
-        # turn coroutine. Same ceiling and the same double-check as
-        # _reconstruct_str_replace_before: stat() races a writer still growing the
-        # file, so the length is re-checked after the read as well.
-        st = p.stat()
-        if not stat_module.S_ISREG(st.st_mode) or st.st_size > _MAX_RECONSTRUCT_BYTES:
-            return None
-        # Read through hooks.safe_read_file rather than Path.read_text, for the
-        # reason the sibling reader already documents: validate_file_path checks a
-        # path and this reads one, and between the two an agent can swap the
-        # validated file for a symlink pointing outside it. safe_read_file
-        # re-checks the RESOLVED target and opens with O_NOFOLLOW, closing that
-        # window (AWS-33/AWS-62). It also handles the encoding concern that the
-        # old call spelled out by hand: Git and agent-authored files are UTF-8
-        # whatever the host's preferred code page says, which matters on Windows.
-        content = safe_read_file(path)
-        if len(content) > _MAX_RECONSTRUCT_BYTES:
-            return None
-        return content
+            return None, False
+        # BOUND the read, and read it symlink-safely, in one call.
+        #
+        # This is the one snapshot path deliberately NOT capped by _MAX_SNAPSHOT --
+        # it exists to feed a full-body diff -- so without a ceiling both the read
+        # and difflib's pass over the result are unbounded on the turn coroutine,
+        # and an agent can write a file of any size. `max_bytes` applies the same
+        # ceiling _reconstruct_str_replace_before uses.
+        #
+        # `allow_truncate` rather than letting the ceiling raise: the reader's
+        # memory bound is identical either way (at most max_bytes + 1 is ever
+        # read), but truncating returns the prefix instead of nothing, so an
+        # oversized file still shows real content. Callers learn it is a prefix
+        # from the second element and can decline to diff it.
+        #
+        # Read through the hooks chokepoint rather than Path.read_text for the
+        # reason that sibling already documents: validate_file_path checks a path
+        # and a plain read opens one, and between the two an agent can swap the
+        # validated file for a link pointing outside it. The `_nolink` reader opens
+        # with O_NOFOLLOW and then fstat()s the DESCRIPTOR, so the inode validated
+        # is the inode read -- it rejects a hardlinked inode too, which O_NOFOLLOW
+        # alone does not (AWS-33/AWS-62).
+        #
+        # Bytes rather than text, and decoded here, because the text chokepoint
+        # opens with encoding="utf-8" and no error handler: an agent-written file
+        # holding one undecodable byte would raise, the except below would swallow
+        # it, and the row would silently show nothing. Git and agent-authored files
+        # are UTF-8 whatever the host's preferred code page says -- which matters on
+        # Windows, where a legacy default like cp1252 would mangle them -- and
+        # `errors="replace"` keeps binary garbage readable instead of fatal.
+        # `within_root` is what ACTIVATES the reader's fd-pinned checks, and that is
+        # the only reason it is passed.
+        #
+        # `O_NOFOLLOW` guards the FINAL path component only. An agent that swaps a
+        # validated ANCESTOR directory for a link into a credential directory
+        # between `validate_file_path` above and the open below reaches a different
+        # inode than the one approved, and those bytes would land in message
+        # metadata. The reader resolves the OPENED descriptor's real path and refuses
+        # it when `is_sensitive_path` matches -- but that entire block sits behind
+        # `if within_root is not None`, so with no root none of it runs.
+        #
+        # WHAT THIS COVERS: the credential case, which is the one that matters. The
+        # check is pinned to the inode actually opened, so a swap into a sensitive
+        # directory is refused however the path was spelled.
+        #
+        # WHAT IT DOES NOT: relocation to a NON-sensitive directory. The reader
+        # re-resolves `within_root` itself at read time, so a root handed over as a
+        # path string follows the same swapped link and the containment half of the
+        # check cannot see the move. Closing that needs the root captured inside the
+        # reader, or an fd handed to it -- `hooks.py`'s to fix, not this module's.
+        # Recorded here rather than implied away, and pinned by a test that fails if
+        # the root stops being passed.
+        root = str(Path(validated).resolve().parent)
+        raw = safe_read_file_bytes_nolink(
+            path,
+            root,
+            max_bytes=_MAX_RECONSTRUCT_BYTES,
+            allow_truncate=True,
+        )
+        if raw is None:
+            return None, False
+        text = raw.decode("utf-8", errors="replace")
+        # Translate line endings the way the text-mode read this replaced did.
+        #
+        # Reading BYTES buys the lenient decode, and costs Python's universal-newline
+        # translation: a text-mode open (newline=None) folds \r\n and lone \r to \n,
+        # and a decode does not. Every consumer downstream compares this against the
+        # `new_str` an agent supplied -- which is \n-only -- so on a CRLF file the
+        # before/after pair differed on every single line, the patch was one whole-file
+        # hunk, and a genuine no-op looked like a rewrite. Windows CI is where this
+        # shows up unmissably, but it is not Windows-specific: a CRLF file checked out
+        # on any host hits it.
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        # Measured against the ceiling in BYTES, which is what the reader bounded.
+        # A decoded length would answer a different question on any multi-byte file.
+        #
+        # STRICTLY less than: a truncating read returns exactly `max_bytes`, so a
+        # body of precisely that length is indistinguishable from one that was cut.
+        # The ambiguous case resolves to "treat as a prefix", because the cost of
+        # being wrong in that direction is one patch not shown, while the other
+        # direction diffs a prefix against a full body and fabricates a deletion.
+        return text, len(raw) < _MAX_RECONSTRUCT_BYTES
     except Exception:
-        return None
+        return None, False
+
+
+def _safe_read_snapshot_raw(path: str) -> str | None:
+    """``_read_snapshot_bounded`` for callers that do not care about truncation.
+
+    Kept as the shape most callers want: they cap the result at
+    :data:`_MAX_SNAPSHOT` anyway, so a body long enough to be truncated at the
+    much higher reconstruct ceiling is one they would have cut regardless.
+    """
+    text, _complete = _read_snapshot_bounded(path)
+    return text
 
 
 def _safe_read_snapshot(path: str) -> str | None:
@@ -1576,39 +1681,42 @@ def _snapshot_write_target(
     return _before_entry(path, content)
 
 
-def _flush_file_changes(slot: "_ChatSlot") -> None:
-    """Attach accumulated file changes to the last assistant message.
+def _read_file_change_snapshots(deduped: dict[str, dict[str, str]]) -> None:
+    """Fill in each entry's ``after`` (and ``patch`` where needed). BLOCKING.
 
-    Dedups by path (first before, last after), reads the AFTER content from
-    disk, and writes the list to message meta as ``file_changes``. Called on
-    every exit path (success / cancel / error) so users always see what was
-    modified, even on aborted turns.
+    Split out of :func:`_flush_file_changes` so it can run in a worker thread:
+    this is the only part of the flush that does file IO or a difflib pass, and
+    everything around it is cheap dict work that must stay on the loop because it
+    mutates slot state. Pure with respect to the slot -- it reads the filesystem
+    and writes only into ``deduped`` -- so the on-loop and off-loop callers share
+    one implementation and cannot drift apart.
+
+    Bounded, but bounded is not the same as non-blocking: an up-to-2 MiB read plus
+    a difflib pass over it is the "large synchronous file IO" the event-loop rule
+    names, whatever it measures. Measured worst case for reference, so a future
+    reader does not have to re-derive it: 2 MiB of repeated lines is ~25 ms end to
+    end, and ~85 ms for 43k fully-reordered lines.
     """
-    # Defensive: only proceed when a real, non-empty list is present. Tests
-    # using MagicMock slots leave _file_changes as a MagicMock attribute
-    # (always truthy), so an isinstance check is needed in addition to the
-    # length check to avoid a synthetic message getting fabricated when no
-    # writes actually happened.
-    fc_changes = getattr(slot, "_file_changes", None)
-    if not isinstance(fc_changes, list) or not fc_changes:
-        return
-    # Dedup: keep first before for each path (truest "before") since a file
-    # may be modified multiple times in one turn.
-    deduped: dict[str, dict[str, str]] = {}
-    for fc in slot._file_changes:
-        p = fc["path"]
-        if p not in deduped:
-            deduped[p] = {"path": p, "before": fc["content"], "after": ""}
-            # Transient, popped below — never reaches message meta.
-            full = fc.get("before_full")
-            if isinstance(full, str):
-                deduped[p]["before_full"] = full
-    # Read after-content once per path. Uses the raw reader so an oversized file
-    # can still be diffed in full; the capped prefix is what goes to meta.
     for entry in deduped.values():
-        after_full = _safe_read_snapshot_raw(entry["path"])
+        after_full, after_complete = _read_snapshot_bounded(entry["path"])
+        # An oversized file is not a missing one. `after_full is None` means there
+        # is genuinely no content (gone, unreadable, sensitive); a truncated read
+        # returns a real prefix. Collapsing the two stored "" for a file that had
+        # merely grown past the reconstruct ceiling, and since `before` still held
+        # a capped snapshot, the row rendered an ordinary edit as a wholesale
+        # deletion -- with nothing on screen to say the content was simply too
+        # large to fetch.
         entry["after"] = _truncate_snapshot(after_full) if after_full is not None else ""
         before_full = entry.pop("before_full", None)
+        # `before_full` is attached ONLY when the before-body was itself truncated,
+        # so its absence is not "we do not have the before" -- it means the capped
+        # snapshot IS the whole body. Reading it as absence missed the
+        # small-to-large direction entirely: a file that was short and grew past the
+        # cap had no `before_full`, failed the gate below, and shipped a complete
+        # before against an after cut at _MAX_SNAPSHOT, with the tail of the
+        # addition simply gone and no patch carrying it. That is the same defect
+        # this change exists to fix, in the one direction it did not cover.
+        before_body = before_full if before_full is not None else entry["before"]
         # The capped pair is cut from the START of the file, so it can misrepresent
         # a change in two different ways once a body exceeds _MAX_SNAPSHOT:
         #
@@ -1625,18 +1733,110 @@ def _flush_file_changes(slot: "_ChatSlot") -> None:
         # whole class: small for a small edit however large the file, and its hunk
         # headers keep the TRUE line numbers. An untruncated pair is already
         # faithful, so it is left alone, and a genuine no-op produces no patch.
-        truncated = (
-            before_full is not None
-            and after_full is not None
-            and (len(before_full) > _MAX_SNAPSHOT or len(after_full) > _MAX_SNAPSHOT)
+        #
+        # `after_complete` is a REQUIREMENT, not a nicety: diffing a prefix against
+        # a full before-body reports everything past the cut as deleted, which is
+        # the same lie in patch form. A body over the reconstruct ceiling therefore
+        # gets the capped pair and no patch -- an edit past _MAX_SNAPSHOT in a file
+        # that large is still not shown, which is this fix's known limit, but it is
+        # an omission rather than a fabricated deletion.
+        truncated = after_full is not None and (
+            len(before_body) > _MAX_SNAPSHOT or len(after_full) > _MAX_SNAPSHOT
         )
-        if (
-            before_full is not None
-            and after_full is not None
-            and truncated
-            and before_full != after_full
-        ):
-            entry["patch"] = _unified_patch(entry["path"], before_full, after_full)
+        if after_full is not None and after_complete and truncated and before_body != after_full:
+            entry["patch"] = _unified_patch(entry["path"], before_body, after_full)
+
+
+def _dedupe_file_changes(
+    slot: "_ChatSlot",
+) -> tuple[dict[str, dict[str, str]], dict | None] | None:
+    """Take this turn's writes and the row they belong to. Cheap; no IO.
+
+    Returns ``(deduped, target_row)`` or None when there is nothing to flush, so a
+    caller can skip the worker hop entirely rather than paying for an empty trip.
+
+    SNAPSHOT-AND-SWAP, and both halves matter once the caller offloads. The
+    accumulator is emptied HERE, on the loop, in the same step that reads it: a
+    detached flush that cleared it after its await would discard whatever the
+    NEXT turn had accumulated in the meantime. And ``target_row`` binds the
+    assistant message by identity now, because "the most recent assistant
+    message" is a moving target -- by the time a detached flush resolves, the
+    successor turn may own that row, and this turn's changes would be attached to
+    it. A positional or recency-based lookup is not an identity.
+    """
+    # Defensive: only proceed when a real, non-empty list is present. Tests
+    # using MagicMock slots leave _file_changes as a MagicMock attribute
+    # (always truthy), so an isinstance check is needed in addition to the
+    # length check to avoid a synthetic message getting fabricated when no
+    # writes actually happened.
+    fc_changes = getattr(slot, "_file_changes", None)
+    if not isinstance(fc_changes, list) or not fc_changes:
+        return None
+    # Dedup: keep first before for each path (truest "before") since a file
+    # may be modified multiple times in one turn.
+    deduped: dict[str, dict[str, str]] = {}
+    for fc in fc_changes:
+        p = fc["path"]
+        if p not in deduped:
+            deduped[p] = {"path": p, "before": fc["content"], "after": ""}
+            # Transient, popped later — never reaches message meta.
+            full = fc.get("before_full")
+            if isinstance(full, str):
+                deduped[p]["before_full"] = full
+    # Swap: this turn owns what it just read, and the next turn starts empty.
+    slot._file_changes = []
+    target_row = next((m for m in reversed(slot.messages) if m.get("role") == "assistant"), None)
+    return deduped, target_row
+
+
+async def _flush_file_changes_off_loop(slot: "_ChatSlot") -> None:
+    """:func:`_flush_file_changes` with the read and diff in a worker thread.
+
+    The gateway runs one event loop for every session, so a synchronous
+    multi-megabyte read plus a difflib pass inside turn finalization stalls every
+    other session's streaming for its duration and counts against the loop
+    watchdog. Only the IO half moves: the dedup before it and the attach after it
+    are cheap and the attach MUTATES the slot, which must stay on the loop.
+    """
+    taken = _dedupe_file_changes(slot)
+    if taken is None:
+        return
+    deduped, target_row = taken
+    await asyncio.to_thread(_read_file_change_snapshots, deduped)
+    _attach_file_changes(slot, deduped, target_row)
+
+
+def _flush_file_changes(slot: "_ChatSlot") -> None:
+    """Attach accumulated file changes to the last assistant message.
+
+    Dedups by path (first before, last after), reads the AFTER content from
+    disk, and writes the list to message meta as ``file_changes``. Called on
+    every exit path (success / cancel / error) so users always see what was
+    modified, even on aborted turns.
+
+    Fully synchronous, for callers with no loop to await on. A caller ON the
+    event loop wants :func:`_flush_file_changes_off_loop` instead -- same three
+    steps, same helpers, with the IO half in a worker thread.
+    """
+    taken = _dedupe_file_changes(slot)
+    if taken is None:
+        return
+    deduped, target_row = taken
+    _read_file_change_snapshots(deduped)
+    _attach_file_changes(slot, deduped, target_row)
+
+
+def _attach_file_changes(
+    slot: "_ChatSlot",
+    deduped: dict[str, dict[str, str]],
+    target_row: dict | None = None,
+) -> None:
+    """Scrub and attach the prepared entries to the assistant message.
+
+    On the loop: mutates ``slot.messages`` and the dirty flag. ``target_row`` is
+    the row identified when the changes were taken; it is used rather than
+    re-finding "the most recent assistant message", which can have moved on.
+    """
     # Scrub credentials and exfil URLs from path/before/after BEFORE attaching
     # to message meta. _save_slot_to_history runs _redact_meta on persist, but
     # the in-memory slot.messages reaches the dashboard UI via SSE/WS BEFORE
@@ -1665,13 +1865,33 @@ def _flush_file_changes(slot: "_ChatSlot") -> None:
     # would silently discard real changes past the snapshot limit or inside
     # redacted spans.
     fc_list = list(deduped.values())
-    # Attach to the most recent assistant message; if none exists (turn
-    # aborted before any text), create a synthetic message so the chips
-    # still surface.
-    for m in reversed(slot.messages):
-        if m.get("role") == "assistant":
-            m.setdefault("meta", {})["file_changes"] = fc_list
-            break
+    # Attach to the row this turn's changes were TAKEN against, not to whatever is
+    # most recent now. With a detached flush the two can differ: the successor turn
+    # may already own the newest assistant row by the time this resolves, and a
+    # recency lookup would hang this turn's changes on it. `target_row` is the same
+    # dict object, matched by identity.
+    #
+    # Three outcomes, and the distinction between the last two is load-bearing:
+    #
+    #   - the captured row is still there  -> write to it
+    #   - there was NO row when the changes were taken (the turn aborted before it
+    #     produced any text) -> synthesize one, so the chips still surface
+    #   - there WAS a row and it is gone   -> DISCARD
+    #
+    # That third case is a rewind: a trim, a reset, or a regenerate removed the
+    # turn this belonged to. Synthesizing there appends a discarded turn's writes
+    # onto a transcript that has been rewritten past them, so the user sees changes
+    # attributed to history that no longer exists. `had_target` is what tells the
+    # two absences apart -- "no row now" cannot, because it is true for both.
+    if target_row is not None:
+        if not any(m is target_row for m in slot.messages):
+            logger.debug(
+                "Dropping %d file_changes for slot %s: the captured row was rewound",
+                len(fc_list),
+                slot.key,
+            )
+            return
+        target_row.setdefault("meta", {})["file_changes"] = fc_list
     else:
         # broadcast=False: the synthetic message reaches the UI via the same
         # SSE/WS path the dashboard already drains for this slot. Default
@@ -1697,7 +1917,10 @@ def _flush_file_changes(slot: "_ChatSlot") -> None:
     # (slot.append in the else branch already sets it; setting it once here
     # covers both branches and cannot be missed by a later edit.)
     slot._dirty = True
-    slot._file_changes = []
+    # The accumulator is NOT cleared here. It is emptied in _dedupe_file_changes,
+    # atomically with the read that consumes it, because a detached flush reaches
+    # this point after an await -- and by then the list can hold the NEXT turn's
+    # writes, which clearing here would throw away.
 
 
 def _attach_turn_stats(
@@ -7715,7 +7938,7 @@ async def _run_chat(
                     diff_path=event.diff_path,
                 )
                 if _file_snapshot:
-                    slot._file_changes.append(_file_snapshot)
+                    _retain_file_snapshot(slot, _file_snapshot)
                 state.broadcast_ws(
                     "tool_call",
                     _tool_payload,
@@ -7870,7 +8093,7 @@ async def _run_chat(
                         diff_path=event.diff_path,
                     )
                     if _file_snapshot_upd:
-                        slot._file_changes.append(_file_snapshot_upd)
+                        _retain_file_snapshot(slot, _file_snapshot_upd)
                     # Refresh the toolLog entry (sseToolActivity merges by id).
                     state.broadcast_ws(
                         "tool_call",
@@ -11099,7 +11322,7 @@ async def _run_chat(
                 model=_turn_model,
             )
             # Attach accumulated file changes to last assistant message before persist
-            _flush_file_changes(slot)
+            await _flush_file_changes_off_loop(slot)
             # Save to history and trigger memory consolidation
             await save_slot_off_loop(state, slot)
         # Reset ALL retry budgets once the cycle completes (success OR the
@@ -12221,13 +12444,6 @@ async def _run_chat(
             setattr(client, "child_fidelity_aware", False)
         except Exception:
             pass
-        # Ensure file changes always surface, even on cancel/error. Wrapped so
-        # a raise here cannot skip the re-arm below and re-introduce the orphan
-        # bug this fix prevents.
-        try:
-            _flush_file_changes(slot)
-        except Exception:
-            logger.debug("_flush_file_changes failed", exc_info=True)
         # This turn consumed the one-shot post-compaction re-injection flag but
         # never landed, so the prompt carrying the skills index was discarded —
         # an early return (stale-recover / tool-stall / error re-queue), an
@@ -12235,7 +12451,7 @@ async def _run_chat(
         # re-queue. Put the flag back here rather than at the success check,
         # because most of those paths never reach it; without this the index is
         # lost for the remaining life of the session. Wrapped for the same
-        # reason as the flush above.
+        # reason as the flush below.
         #
         # The member condition rides the same re-arm for the same reason: a
         # member DM's FIRST turn that dies before landing (MemberRulesUnreadable
@@ -12265,6 +12481,29 @@ async def _run_chat(
                 _autonudge.notify_turn_complete(slot.key)
         except Exception:
             logger.debug("autonudge.notify_turn_complete failed", exc_info=True)
+        # Ensure file changes always surface, even on cancel/error.
+        #
+        # DETACHED, not awaited, and that is the whole point. Everything below in
+        # this ``finally`` is a chain of must-run cleanup whose own comments record
+        # what a skip costs: the session lease (a leak makes the session read as
+        # permanently busy until a gateway restart), this turn's identity, the
+        # steer requeue and the queue drain. ``CancelledError`` derives from
+        # ``BaseException``, so ANY await placed in that chain is a point where a
+        # cancellation delivered mid-suspension slips past ``except Exception`` and
+        # skips every remaining step. There is no position in the chain that is
+        # safe: whatever follows the await is what gets lost.
+        #
+        # So the read and diff go off-loop as a task and this frame adds no
+        # suspension point at all. The turn keeps unwinding, and the flush lands
+        # on the loop a moment later. Nothing waits on it: the attach sets
+        # ``slot._dirty`` and the periodic flush is what persists this path
+        # anyway -- unlike the success path, there is no explicit save here.
+        try:
+            _fc_flush_task = asyncio.create_task(_flush_file_changes_off_loop(slot))
+            state._background_tasks.add(_fc_flush_task)
+            _fc_flush_task.add_done_callback(state._background_tasks.discard)
+        except Exception:
+            logger.debug("_flush_file_changes dispatch failed", exc_info=True)
         # Clean up mirror stream on any exit path.
         #
         # The release below MUST happen however this block exits. Each await in
