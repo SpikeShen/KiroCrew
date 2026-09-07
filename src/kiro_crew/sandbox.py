@@ -319,6 +319,39 @@ _CREW_READONLY_LEAVES: tuple[str, ...] = (
     # fence how a command SPELLS this path, and the kernel denial is what still
     # holds when a spelling is built at runtime (``$(printf ...)``).
     "settings_seeds.json",
+    # The browse CLI's install prefix (``browser_cli/install.py``'s
+    # ``managed_prefix``; ``playwright-cli.sh`` defaults to the same directory).
+    # Whatever resolves out of it is EXECUTED by the gateway -- ``detect()`` spawns
+    # ``[path, "--version"]`` through ``cli_env()`` on every browser-status read --
+    # so a sandboxed process that can write here chooses a program the gateway
+    # runs with its own environment.
+    #
+    # READONLY rather than hidden, and this one is not a close call: the agent's
+    # own shell has to EXECUTE the launcher for browsing to work at all, so a mask
+    # would break the very feature this protects. Read + execute with a
+    # kernel-denied write is the asymmetry every legitimate consumer already lives
+    # within -- ``install()`` writes the tree from the GATEWAY and never from a
+    # sandboxed turn, ``cli_path``/``detect``/``available`` only resolve and spawn,
+    # and the revision probe only reads. Precedent in this same list:
+    # ``aws-control-staging``, gateway-owned and fenced so a same-UID agent cannot
+    # swap the contents between the gateway's write and its read.
+    #
+    # Paired with the same leaf on ``security``'s write floors -- the deny rules
+    # fence how a command SPELLS this path, and the kernel denial is what still
+    # holds when a spelling is built at runtime.
+    #
+    # Two shapes escape this seal, and both are answered by REFUSING TO TRUST them
+    # rather than by refusing to launch. A SYMLINK here seals the target inode while
+    # the link name stays writable (``_warn_if_alias_backed`` reports it), and an
+    # operator's ``KIROCREW_PLAYWRIGHT_CLI_HOME`` may name a directory outside the
+    # data home entirely, which no ``$HOME``-relative rule can cover. In both cases
+    # ``browser_cli.install`` does not resolve the launcher from the prefix at all,
+    # so nothing is executed out of an unfenced directory. Refusing the SPAWN
+    # instead would turn a relocated install tree -- a reasonable thing to do with
+    # a 500 MB directory -- into a host where no agent turn starts, which is a far
+    # wider blast radius than the exposure. That is the same trade
+    # ``_warn_if_alias_backed`` argues for the config ceilings.
+    "playwright-cli",
 )
 
 #: Crew-home leaves that MUST stay read-write for a sandboxed process. Every entry is
@@ -528,6 +561,11 @@ def carveout_shadowed_by_foreign_mask(path: str, mode: str = "standard") -> bool
 #: 1. An EMPTY document must mean what an ABSENT file means to the reader:
 #:
 #:    * ``profiles`` — an empty dir yields no profile, same as no dir;
+#:    * ``playwright-cli`` — the browse CLI's install prefix. An empty dir resolves
+#:      no launcher (``cli_path``'s last tier finds nothing in it) and holds no
+#:      ``@playwright/cli`` tree for the revision probe, which is precisely what an
+#:      absent prefix means: the CLI is not installed. Like ``profiles`` it is a
+#:      DIRECTORY, so criterion 2 does not arise — see the note there;
 #:    * ``computer_use.json`` — ``computer_use.enable_state.load_state`` reads ``{}``
 #:      as DISABLED, which is what an absent keystone means;
 #:    * ``oauth_endpoints.json`` — ``security._validate_operator_oauth_entries``
@@ -550,7 +588,10 @@ def carveout_shadowed_by_foreign_mask(path: str, mode: str = "standard") -> bool
 #:    for ``settings_seeds.json`` at "Crew owns no settings file", so the writer takes
 #:    its leave-it-alone branch: the seed is not refreshed, and nothing is overwritten
 #:    or unlinked. The empty ``profiles`` dir is exempt from the concern entirely: a
-#:    directory bind shows live contents, so a profile added later is visible.
+#:    directory bind shows live contents, so a profile added later is visible — and
+#:    the same holds for ``playwright-cli``, which is what makes sealing it
+#:    compatible with installing into it afterwards: the gateway writes the real
+#:    tree and a sandboxed process sees it, read-only.
 #:
 #: DELIBERATELY EXCLUDED, and each for a different one of those two reasons:
 #:
@@ -573,7 +614,7 @@ def carveout_shadowed_by_foreign_mask(path: str, mode: str = "standard") -> bool
 #: this list closes: a mask needs the opposite treatment (an empty bind OVER the
 #: name), and ``_CREW_HIDDEN_LEAVES`` has no reader to prove an empty document is
 #: absent-equivalent, so each leaf needs its own argument.
-_CREW_PRECREATE_READONLY_DIR_LEAVES: tuple[str, ...] = ("profiles",)
+_CREW_PRECREATE_READONLY_DIR_LEAVES: tuple[str, ...] = ("profiles", "playwright-cli")
 _CREW_PRECREATE_READONLY_FILE_LEAVES: tuple[str, ...] = (
     "computer_use.json",
     "oauth_endpoints.json",

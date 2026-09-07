@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from kiro_crew import platform_compat
 from kiro_crew.browser_cli import launch as mod
+from kiro_crew.config.paths import config_dir
 
 
 def test_launch_config_path_is_under_the_data_home(
@@ -585,3 +587,82 @@ def test_browser_socket_env_refuses_relative_configured_roots(
     }
 
     assert mod.browser_socket_env(env) == {}
+
+
+class TestTheInstallPrefixIsFenced:
+    """The prefix the CLI installs into must not be agent-WRITABLE.
+
+    Whatever resolves out of it is executed by the gateway — `detect()` spawns
+    `[cli_path(), "--version"]` through `cli_env()` on every browser-status read —
+    so an agent able to write there chooses a program the gateway runs with its own
+    environment. Fenced on both paths, because protected on one is not protected:
+    the tool gate refuses the agent's file-edit tool, and the sandbox's kernel
+    denial holds for a path spelled at runtime.
+
+    Read and EXECUTE stay open on purpose. Browsing requires the agent's own shell
+    to run the launcher, so hiding the prefix would break the feature the fence
+    exists to protect.
+    """
+
+    @staticmethod
+    def _prefix_paths() -> list[str]:
+        """The prefix, named the way THIS branch's code already names it.
+
+        `_STANDALONE_PREFIX_ENV` / `_STANDALONE_PREFIX_DIR` are what
+        `_standalone_node_modules()` already probes, and the same directory
+        `playwright-cli.sh` installs into by default — so this fence protects the
+        shipped unprivileged install shape as it exists today, independently of any
+        change to where the one-click install puts things.
+        """
+        import os
+
+        from kiro_crew.browser_cli import install as install_mod
+
+        override = os.environ.get(install_mod._STANDALONE_PREFIX_ENV, "").strip()
+        prefix = Path(override) if override else config_dir() / install_mod._STANDALONE_PREFIX_DIR
+        bin_dir = prefix if platform_compat.IS_WINDOWS else prefix / "bin"
+        return [
+            str(prefix),
+            str(bin_dir / install_mod.CLI_BIN),
+            str(prefix / "lib" / "node_modules" / "@playwright" / "cli" / "package.json"),
+        ]
+
+    def test_the_edit_gate_refuses_every_path_under_the_prefix(self) -> None:
+        from kiro_crew import security
+
+        for path in self._prefix_paths():
+            assert security.is_sensitive_write_path(path) is True, path
+
+    def test_the_prefix_stays_readable(self) -> None:
+        """Hiding it would stop the agent executing the launcher at all."""
+        from kiro_crew import security
+
+        for path in self._prefix_paths():
+            assert security.is_sensitive_path(path) is False, path
+
+    def test_the_sandbox_seals_the_prefix_read_only(self) -> None:
+        from kiro_crew import sandbox
+
+        assert "playwright-cli" in sandbox._CREW_READONLY_LEAVES
+        # Hidden and read-only are different tiers, and this leaf must be the
+        # second: a mask would deny the exec browsing depends on.
+        assert "playwright-cli" not in sandbox._CREW_HIDDEN_LEAVES
+
+    def test_the_seal_is_not_skipped_on_a_host_that_never_installed(self) -> None:
+        """`mount(2)` cannot target an absent path, so the launcher creates it.
+
+        Without this the data home stays writable at that name on exactly the
+        installs that have never run the browser install — the population the fence
+        matters most for.
+        """
+        from kiro_crew import sandbox
+
+        assert "playwright-cli" in sandbox._CREW_PRECREATE_READONLY_DIR_LEAVES
+
+    def test_an_unrelated_data_home_path_is_untouched(self) -> None:
+        """The fence is one subtree, not a broad write-lock on the data home."""
+        from kiro_crew import security
+
+        assert (
+            security.is_sensitive_write_path(str(config_dir() / "workspace" / "notes.md")) is False
+        )

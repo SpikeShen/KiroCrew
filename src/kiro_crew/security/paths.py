@@ -911,6 +911,26 @@ _WRITE_PROTECTED_HOME_PATHS += [
 _KIRO_AGENTS_DIR = ".kiro/agents"
 _WRITE_PROTECTED_HOME_PATHS += [_KIRO_AGENTS_DIR]
 
+# The browse CLI's install PREFIX (``browser_cli/install.py``; the same directory
+# ``playwright-cli.sh`` installs into). Same shape as ``playwright-cli-config.json``
+# above, one step further along: that file is an input to a security decision, this
+# directory holds the EXECUTABLE the decision runs. ``detect()`` spawns
+# ``[cli_path(), "--version"]`` through ``cli_env()`` on every browser-status read,
+# so an agent able to write here is choosing a program the gateway executes with
+# its own environment.
+#
+# WRITE-protected rather than read+write sensitive: every legitimate consumer reads
+# or EXECUTES -- ``cli_path``, ``detect``, ``available``, the revision probe, and
+# the agent's own shell running the CLI -- and only the gateway writes. Hiding it
+# would break browsing while doing nothing about the write, which is the whole
+# risk. ``_path_in_home_dirs`` resolves paths UNDER each entry, so one directory
+# entry covers the launcher and the package tree alike.
+#
+# Paired with the same leaf in ``sandbox._CREW_READONLY_LEAVES``: this gate fences
+# the agent's file-edit tool, and the kernel denial is what still holds for a path
+# spelled at runtime. Protected on one path only is not protected.
+_WRITE_PROTECTED_HOME_PATHS += [f"{prefix}/playwright-cli" for prefix in _CREW_HOME_PREFIXES]
+
 #: Longest command ``is_sensitive_bash_command`` will scan. Longer input is
 #: REFUSED, not skipped and not scanned: both detectors the gate runs are linear
 #: in the subject, so this bound is what turns "linear" into a hard wall-clock
