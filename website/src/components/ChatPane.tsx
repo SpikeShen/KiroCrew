@@ -35,6 +35,7 @@ import { deriveFollowUpOptions } from '../app-sdk/protocol'
 import { CONTENT_WIDTH, loadChatConfig, type ChatConfig } from '../pages/chat/ChatSettings'
 import { tryQuickSend } from '../lib/quickSend'
 import { mergeRecoveredDraft } from '../utils/chatDrafts'
+import { takePaneDraft, writePaneDraft, mergePaneDraft, subscribePaneDraft } from '../utils/chatPaneDrafts'
 import { sendTurn, type SendReceiptStatus } from '../chat-core/transport/sendTurn'
 import { triggerRefresh, updateSlot } from '../store/dashboardSlice'
 import { performSlotSwitch } from '../lib/slotSwitch'
@@ -115,7 +116,96 @@ export default function ChatPane({
   const connectionsUiOn = useConnectionsUiEnabled()
   const [input, setInput] = useState('')
   const [pendingFiles, setPendingFiles] = useState<string[]>([])
-  const [uploadError, setUploadError] = useState('')
+  // Upload failures shown as a banner, keyed by the slot they were shown for.
+  // A banner belongs to the conversation it happened in: rebinding the pane to
+  // another slot must not carry A's banner over B's thread, and coming back to
+  // A shows it again until dismissed. Dismiss clears only the shown slot's
+  // entry. A failure for a slot NOT on screen never enters this map — see
+  // reportUploadFailure, which writes it to that slot's transcript instead.
+  const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({})
+  const uploadError = uploadErrors[slotKey] ?? ''
+  const setUploadError = useCallback((message: string, forSlot: string = slotKey) => {
+    setUploadErrors(prev => {
+      if (!message) { if (!(forSlot in prev)) return prev; const next = { ...prev }; delete next[forSlot]; return next }
+      return { ...prev, [forSlot]: message }
+    })
+  }, [slotKey])
+  // The composer is pane-LOCAL state, and a host may rebind one pane instance
+  // to another slot without remounting it (the Members page mounts
+  // `<ChatPane slotKey={activeSlot}>` with no key). Two things must then hold:
+  // the text typed for member A must not ride along into B's composer, and a
+  // recovery that lands AFTER the switch (a refused or unconfirmed send is in
+  // flight for seconds) must go to A, not to whatever is on screen now. Both
+  // are served by the pane's per-slot draft store (utils/chatPaneDrafts — the
+  // repo's slot-draft-store mechanism, on the pane's own keys): on a slot
+  // change the outgoing slot's composer is parked and the incoming slot's is
+  // restored; a late recovery for a slot that is no longer shown merges into
+  // that slot's parked draft. The store outlives the pane, so leaving the page
+  // mid-flight loses nothing either.
+  const slotKeyRef = useRef(slotKey)
+  const inputRef = useRef(input)
+  const pendingFilesRef = useRef(pendingFiles)
+  // False once the pane is gone: a recovery or upload result that lands after
+  // unmount has no composer to write to (a setState on an unmounted component
+  // is a silent no-op), so it goes to the store instead.
+  const mountedRef = useRef(false)
+  inputRef.current = input
+  pendingFilesRef.current = pendingFiles
+  useEffect(() => {
+    mountedRef.current = true
+    const prev = slotKeyRef.current
+    // Take, not read: once a slot is live in this composer, the composer is
+    // the one copy — the store entry is cleared so a later park cannot
+    // overwrite an arrival that came in between.
+    if (prev !== slotKey) {
+      writePaneDraft(prev, { text: inputRef.current, files: pendingFilesRef.current })
+      slotKeyRef.current = slotKey
+      const incoming = takePaneDraft(slotKey)
+      setInput(incoming.text)
+      setPendingFiles(incoming.files)
+    } else {
+      // First mount: pick up whatever this slot parked before (a page the user
+      // left mid-draft, a recovery that landed while the pane was gone).
+      const parked = takePaneDraft(slotKey)
+      if (parked.text) setInput(cur => mergeRecoveredDraft(cur, parked.text))
+      if (parked.files.length) setPendingFiles(cur => [...cur, ...parked.files.filter(f => !cur.includes(f))])
+    }
+    // While this slot is on screen, a late arrival for it (a recovery or upload
+    // result from a PREVIOUS pane instance that showed the same slot, then
+    // unmounted) is handed straight to the live composer. Without this it would
+    // sit in the store until this pane's own park overwrote it.
+    const unsubscribe = subscribePaneDraft(slotKey, () => {
+      const arrived = takePaneDraft(slotKey)
+      if (arrived.text) setInput(cur => mergeRecoveredDraft(cur, arrived.text))
+      if (arrived.files.length) setPendingFiles(cur => [...cur, ...arrived.files.filter(f => !cur.includes(f))])
+    })
+    // Unmount (or the next rebind, which runs this cleanup first): park the
+    // live composer so nothing typed or recovered is lost with the instance.
+    return () => {
+      unsubscribe()
+      mountedRef.current = false
+      writePaneDraft(slotKeyRef.current, { text: inputRef.current, files: pendingFilesRef.current })
+    }
+  }, [slotKey])
+  /** Stage uploaded attachment paths for the slot they were picked in. A slow
+   *  upload can resolve after the pane was rebound to another member; the
+   *  paths then belong to the ORIGINATING slot's parked draft, not to whoever
+   *  is on screen now. */
+  const stagePendingFiles = useCallback((paths: string[], forSlot: string) => {
+    if (!paths.length) return
+    if (!mountedRef.current || forSlot !== slotKeyRef.current) { mergePaneDraft(forSlot, '', paths); return }
+    setPendingFiles((prev) => [...prev, ...paths.filter(p => !prev.includes(p))])
+  }, [])
+  /** Report an upload failure to the slot whose files failed. On screen it is
+   *  the banner. Anywhere else — the pane rebound to another slot, or gone —
+   *  it goes into that slot's TRANSCRIPT as an error row, the same place a
+   *  failed send reports: the transcript is store-backed and survives both the
+   *  rebind and leaving the page, so the failure is found on return rather
+   *  than held in component state nobody may ever render. Never dropped. */
+  const reportUploadFailure = useCallback((message: string, forSlot: string) => {
+    if (mountedRef.current && forSlot === slotKeyRef.current) { setUploadError(message, forSlot); return }
+    dispatch(appendSlotMessage({ slot: forSlot, message: { role: 'error', content: message, cls: '' } }))
+  }, [dispatch, setUploadError])
   // In-pane report of a per-slot setting write (agent / model switch) that did
   // not persist — the shared toast is transient feedback, not the error surface.
   const [switchError, setSwitchError] = useState('')
@@ -366,27 +456,33 @@ export default function ChatPane({
   })
 
   // File upload as a mutation (isPending replaces a manual `uploading` flag).
+  //
+  // The variables carry the slot the files were picked in: the pane can be
+  // rebound to another slot while the upload is in flight, and the result
+  // must follow the files' slot, not the screen: paths stage into that slot's
+  // live or parked composer, failures into that slot's banner (or, after
+  // unmount, its transcript) — see stagePendingFiles / reportUploadFailure.
   const uploadMutation = useMutation({
-    mutationFn: (files: File[]) => api.uploadFiles(files),
+    mutationFn: ({ files }: { files: File[]; forSlot: string }) => api.uploadFiles(files),
     // api.uploadFiles does NOT throw on a server refusal (unsupported type,
     // signature mismatch, over-cap): it resolves with { paths: [], error }.
     // So a refusal lands here in onSuccess, not onError — surface res.error
     // (matching ChatPage) instead of silently doing nothing.
-    onSuccess: (res) => {
-      if (res.error) { setUploadError(i18nT('pages.chatPage.upload_failed_error', { error: res.error })); return }
-      if (res.paths?.length) setPendingFiles((prev) => [...prev, ...res.paths])
+    onSuccess: (res, { forSlot }) => {
+      if (res.error) { reportUploadFailure(i18nT('pages.chatPage.upload_failed_error', { error: res.error }), forSlot); return }
+      if (res.paths?.length) stagePendingFiles(res.paths, forSlot)
     },
     // api.uploadFiles throws for three distinct reasons: a client-side image
     // resize failure, a session expiry, and a transport reject. The first two
     // carry a message worth showing. A fetch reject arrives as a TypeError
     // reading "Failed to fetch", which is not user-facing copy, so that case
     // gets the pane's shared connectivity string instead.
-    onError: (err: unknown) => {
+    onError: (err: unknown, { forSlot }) => {
       const message = (err as Error)?.message
       const reason = (!message || err instanceof TypeError)
         ? i18nT('pages.chatPage.connection_error')
         : message
-      setUploadError(i18nT('pages.chatPage.upload_failed_error', { error: reason }))
+      reportUploadFailure(i18nT('pages.chatPage.upload_failed_error', { error: reason }), forSlot)
     },
   })
   const uploadFiles = useCallback((files: File[]) => {
@@ -403,8 +499,8 @@ export default function ChatPane({
     // already takes, and the one this change just wired to the banner.
     const big = files.find((f) => !VIDEO_EXT.test(f.name) && f.size > 50 * 1024 * 1024)
     if (big) { setUploadError(i18nT('pages.chatPage.file_too_large', { name: big.name })); return }
-    uploadMutation.mutate(files)
-  }, [uploadMutation])
+    uploadMutation.mutate({ files, forSlot: slotKeyRef.current })
+  }, [uploadMutation, setUploadError])
 
   // Classify BEFORE acting (issue #743): a dropped folder inserts its path
   // into the composer as an `@path/` token instead of taking the upload
@@ -431,8 +527,15 @@ export default function ChatPane({
    *  they just did. `mergeRecoveredDraft` owns that rule for every recovery site
    *  in the app, this pane's two included (a failed `doSend` and a failed
    *  question-card fallback); attachments merge here as a set union so a file
-   *  re-picked mid-flight is not double-attached. */
-  const restoreIntoComposer = useCallback((text: string, files: string[] = []) => {
+   *  re-picked mid-flight is not double-attached.
+   *
+   *  `forSlot` is the slot the payload was typed into. When the pane has since
+   *  been rebound to another slot — or unmounted altogether — the text goes
+   *  into THAT slot's parked draft (shown again when the user returns to it)
+   *  instead of into the composer the user is now looking at, which belongs to
+   *  someone else's conversation, or into a component that no longer exists. */
+  const restoreIntoComposer = useCallback((text: string, files: string[] = [], forSlot: string = slotKeyRef.current) => {
+    if (!mountedRef.current || forSlot !== slotKeyRef.current) { mergePaneDraft(forSlot, text, files); return }
     setInput(prev => mergeRecoveredDraft(prev, text))
     if (files.length) setPendingFiles(prev => [...prev, ...files.filter(f => !prev.includes(f))])
   }, [])
@@ -526,7 +629,8 @@ export default function ChatPane({
       ...(dirPaths.length ? { dirs: dirPaths } : {}),
       sendId,
     }
-    if (!busy && (text || files.length)) {
+    const bubbleMinted = !busy && (text || files.length)
+    if (bubbleMinted) {
       dispatch(appendSlotMessage({
         slot: slotKey,
         message: { role: 'user', content: text, cls: 'msg msg-u', ts: new Date().toISOString(), ...(meta ? { meta } : {}) },
@@ -543,7 +647,7 @@ export default function ChatPane({
       // consumed the draft (see the `!optionText` gate above), so restoring the
       // option label here would CLOBBER the preserved draft with text the user
       // can re-click any time.
-      if (!optionText) restoreIntoComposer(text, files)
+      if (!optionText) restoreIntoComposer(text, files, slotKey)
     }
     // Receipt semantics live in the chat-core transport (sendTurn owns the
     // abort deadline and the shared readSendReceipt classification). This
@@ -558,7 +662,31 @@ export default function ChatPane({
         reportFailedSend(receipt.reason, receipt.status)
         return
       }
-      if (receipt.status === 'unknown' || receipt.status === 'response-late') return
+      if (receipt.status === 'unknown') return
+      if (receipt.status === 'response-late') {
+        // The "stays pending" reasoning above needs a row to stay pending. A
+        // BUSY send minted none (the server's queue/steer echo was to be the
+        // representation), so if the deadline fires before any echo landed
+        // the text exists nowhere on screen: hand it back and warn, the same
+        // ruling the steer path takes — a duplicate is visible and deletable,
+        // a silently dropped draft is not. A late echo that does arrive
+        // simply adds the server's row; the notice tells the user to look.
+        if (!bubbleMinted && !optionText) {
+          // Only an echo that carries THIS send's id counts. Queue cards carry
+          // no sendId (see useQueuedMessageActions), and matching one by text
+          // cannot tell this send's card from an identical "ok" someone else
+          // queued meanwhile — so a queued card never suppresses the restore.
+          // The cost is a visible duplicate (card + refilled draft + notice)
+          // when the card did belong to this send; the alternative is silent
+          // loss, and the notice says to check the conversation first.
+          const echoed = selectSlotMessages(store.getState(), slotKey).some(m => m.role === 'user' && m.meta?.sendId === sendId)
+          if (!echoed) {
+            restoreIntoComposer(text, files, slotKey)
+            dispatch(appendSlotMessage({ slot: slotKey, message: { role: 'notice', content: '\u26A0\uFE0F ' + i18nT('pages.chatPage.delivery_unconfirmed'), cls: '' } }))
+          }
+        }
+        return
+      }
       // A steer-flagged send the server neither queued nor injected started a
       // turn: no `queue_push` or `steer_push` echo is coming, and the busy
       // rule above skipped the optimistic bubble, so nothing represents the
@@ -646,7 +774,7 @@ export default function ChatPane({
       if (receipt.status === 'refused' || receipt.status === 'transport-error') {
         dispatch(resolveOptimisticSteer({ slot: slotKey, sendId, outcome: 'queued' }))
         reportSendFailure(receipt.reason, receipt.status)
-        restoreIntoComposer(raw, files)
+        restoreIntoComposer(raw, files, slotKey)
         return
       }
       // - response-late: the deadline aborted the POST; delivery is
@@ -658,7 +786,7 @@ export default function ChatPane({
         const bubble = selectSlotMessages(store.getState(), slotKey).find(m => m.role === 'user' && m.meta?.sendId === sendId)
         if (bubble && !bubble.meta?.optimistic) return
         dispatch(resolveOptimisticSteer({ slot: slotKey, sendId, outcome: 'queued' }))
-        restoreIntoComposer(raw, files)
+        restoreIntoComposer(raw, files, slotKey)
         // \u26A0 is NoticeCard's warn-tone selector (parseNotice).
         dispatch(appendSlotMessage({ slot: slotKey, message: { role: 'notice', content: '\u26A0\uFE0F ' + i18nT('pages.chatPage.delivery_unconfirmed'), cls: '' } }))
         return
@@ -669,7 +797,14 @@ export default function ChatPane({
       // - steered: the server injected it; the steer_push echo owns the row.
       if ((receipt.body as { steered?: boolean }).steered) return
       // - demoted: queued behind the turn (queue_push brings its own card) or
-      //   fell onto a fresh turn (the row is a plain user message).
+      //   fell onto a fresh turn (the row is a plain user message). A queued
+      //   demotion binds the PRE-SEND composer state to its queue entry, as
+      //   doSend does: the card's content is the wire text with inlined file
+      //   markers, so cancelling it must restore the typed text and re-stage
+      //   the files, not hand back `[attached_file N]` with the chip gone.
+      if (receipt.status === 'queued' && typeof receipt.body.queue_id === 'string' && receipt.body.queue_id) {
+        queuedSendStash.set(receipt.body.queue_id, { raw, files, sent: txt })
+      }
       dispatch(resolveOptimisticSteer({ slot: slotKey, sendId, outcome: receipt.status === 'queued' ? 'queued' : 'turn' }))
     })
   }, [running, doSend, input, pendingFiles, slotKey, dispatch, reportSendFailure, restoreIntoComposer])
@@ -893,7 +1028,7 @@ export default function ChatPane({
              landed, and handing it back would invite a second answer to a
              question already gone. */
           onFallbackSend={(text) => {
-            const fail = (reason?: string, status?: SendReceiptStatus) => { reportSendFailure(reason, status); restoreIntoComposer(text) }
+            const fail = (reason?: string, status?: SendReceiptStatus) => { reportSendFailure(reason, status); restoreIntoComposer(text, [], slotKey) }
             void sendTurn({ message: text, slot: slotKey }).then((receipt) => {
               if (receipt.status === 'refused' || receipt.status === 'transport-error' || receipt.status === 'response-late') {
                 fail(receipt.reason, receipt.status)

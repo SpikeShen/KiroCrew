@@ -239,6 +239,85 @@ if (EXPECT === 'after') {
     await page.close()
   }
 
+  // 10 — an upload the server refuses while the member is on screen: the
+  //      pane's banner is the shared ErrorNotice (dismissible, no agent
+  //      hand-off next to an unsaved draft).
+  {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 1 })
+    await routeApi(page, { key: 'member-radar', title: 'radar', running: false, messages: THREAD })
+    await page.route(u => new URL(u).pathname === '/api/upload/file', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ paths: [], error: 'Unsupported file type: application/x-msdownload' }) }))
+    await page.goto(`${BASE}/capture/members-page.html?theme=dark`)
+    await page.waitForSelector('[data-capture-root]')
+    await page.getByText('radar', { exact: true }).first().click()
+    await page.getByText('What did you triage tonight?').waitFor()
+    await page.locator('[data-chat-pane] textarea').first().fill('Here is the tool I mentioned:')
+    await page.locator('[data-chat-pane] input[type="file"]').first().setInputFiles({ name: 'tool.exe', mimeType: 'application/x-msdownload', buffer: Buffer.from('MZ') })
+    await page.getByTestId('chat-pane-upload-error').waitFor()
+    const banner = await page.getByTestId('chat-pane-upload-error').textContent()
+    const dismiss = await page.getByTestId('chat-pane-upload-error').getByRole('button').count()
+    check('10-upload-failure: ErrorNotice banner with reason + dismiss, draft intact', /Unsupported file type/.test(banner || '') && dismiss === 1 && (await page.locator('[data-chat-pane] textarea').first().inputValue()) === 'Here is the tool I mentioned:', `banner="${(banner || '').trim()}" dismiss=${dismiss}`)
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: `${OUT}/10-members-upload-failure-banner.png` })
+    await page.close()
+  }
+
+  // 11 — the same refusal landing AFTER the user switched to another member:
+  //      no banner over the other thread; an error row in radar's transcript,
+  //      found when the user comes back.
+  {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 1 })
+    await routeApi(page, { key: 'member-radar', title: 'radar', running: false, messages: THREAD })
+    let releaseUpload
+    await page.route(u => new URL(u).pathname === '/api/upload/file', route => { releaseUpload = () => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ paths: [], error: 'Unsupported file type: application/x-msdownload' }) }) })
+    await page.goto(`${BASE}/capture/members-page.html?theme=dark`)
+    await page.waitForSelector('[data-capture-root]')
+    await page.getByText('radar', { exact: true }).first().click()
+    await page.getByText('What did you triage tonight?').waitFor()
+    await page.locator('[data-chat-pane] input[type="file"]').first().setInputFiles({ name: 'tool.exe', mimeType: 'application/x-msdownload', buffer: Buffer.from('MZ') })
+    await page.waitForTimeout(300)
+    await page.getByText('fixer', { exact: true }).first().click()
+    await page.waitForTimeout(300)
+    releaseUpload()
+    await page.waitForTimeout(500)
+    const bannerOnFixer = await page.getByTestId('chat-pane-upload-error').count()
+    await page.getByText('radar', { exact: true }).first().click()
+    await transcript(page).getByText(/Unsupported file type/).waitFor()
+    check('11-upload-failure-offscreen: no banner over fixer, error row in radar\'s transcript', bannerOnFixer === 0, `bannerOnFixer=${bannerOnFixer}`)
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: `${OUT}/11-members-upload-failure-transcript-row.png` })
+    await page.close()
+  }
+
+  // 12 — recording: per-member draft parking. Type for radar, switch to fixer
+  //      (composer empty), type for fixer, back to radar (radar's text is back).
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 1, recordVideo: { dir: `${OUT}/.video`, size: { width: 1280, height: 820 } } })
+    const page = await ctx.newPage()
+    await routeApi(page, { key: 'member-radar', title: 'radar', running: false, messages: THREAD })
+    await page.goto(`${BASE}/capture/members-page.html?theme=dark`)
+    await page.waitForSelector('[data-capture-root]')
+    await page.getByText('radar', { exact: true }).first().click()
+    await page.getByText('What did you triage tonight?').waitFor()
+    const box = page.locator('[data-chat-pane] textarea').first()
+    await box.pressSequentially('Half-typed note for radar…', { delay: 40 })
+    await page.waitForTimeout(600)
+    await page.getByText('fixer', { exact: true }).first().click()
+    await page.waitForTimeout(700)
+    const onFixer = await box.inputValue()
+    await box.pressSequentially('Something else for fixer', { delay: 40 })
+    await page.waitForTimeout(600)
+    await page.getByText('radar', { exact: true }).first().click()
+    await page.waitForTimeout(700)
+    const backOnRadar = await box.inputValue()
+    check('12-draft-parking: fixer starts empty, radar text comes back', onFixer === '' && backOnRadar === 'Half-typed note for radar…', `fixer="${onFixer}" radar="${backOnRadar}"`)
+    await page.waitForTimeout(600)
+    const video = page.video()
+    await page.close()
+    await ctx.close()
+    await video.saveAs(`${OUT}/12-member-switch-draft-parking.webm`)
+    await video.delete()
+  }
+
   // 07/08 — recordings: the composer's idle -> busy transition. On the DM the
   //         send button is the SAME element before and after (continuity: the
   //         chat has no busy affordance to swap in); in split view it flips to
