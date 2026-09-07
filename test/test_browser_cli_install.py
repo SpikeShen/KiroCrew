@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from kiro_crew import env as env_mod
+from kiro_crew import platform_compat
 from kiro_crew.browser_cli import install as mod
 
 # The real implementation, captured before the autouse fixture below replaces
@@ -85,7 +86,7 @@ def _wire(
 
     monkeypatch.setattr(mod, "find_node_tool", lambda name, base_path=None: tools.get(name))
 
-    def fake_run(argv: list[str], timeout: float) -> tuple[int, str, str]:
+    def fake_run(argv, timeout, cwd=None):
         calls.append(list(argv))
         return outcomes.get(argv[0], (0, "", ""))
 
@@ -226,7 +227,16 @@ def test_install_runs_all_three_steps_and_scopes_browser_to_chromium(
         "install-browser",
         "install-skills",
     ]
-    assert calls[0] == ["/n/npm", "install", "-g", "@playwright/cli@latest"]
+    # `--prefix` pins where the launcher lands, instead of leaving it to whatever
+    # prefix npm's configuration names — see TestManagedPrefix.
+    assert calls[0] == [
+        "/n/npm",
+        "install",
+        "-g",
+        "--prefix",
+        str(mod.managed_prefix()),
+        "@playwright/cli@latest",
+    ]
     # Omitting the argument installs every engine. Optional WebKit dependencies
     # must not veto a baseline Chromium install on a host where Chromium works.
     assert calls[1] == ["/n/playwright-cli", "install-browser", "chromium"]
@@ -276,7 +286,7 @@ def test_install_falls_back_without_deps_when_the_package_step_is_refused(
         # step too; the with-deps branch is distinguished below by argv content.
     )
 
-    def fake_run(argv: list[str], timeout: float) -> tuple[int, str, str]:
+    def fake_run(argv, timeout, cwd=None):
         calls.append(list(argv))
         if "--with-deps" in argv:
             return (
@@ -1439,3 +1449,245 @@ def test_lifecycle_contract_never_falls_through_to_stale_package(
     mod._source_contains.cache_clear()
 
     assert mod.cli_lifecycle_env_supported() is False
+
+
+class TestManagedPrefix:
+    """The CLI installs into a prefix THIS module pins, not npm's configured one.
+
+    The regression: `npm install -g` exited 0 having linked the launcher into
+    whatever prefix npm's CONFIGURATION named (`prefix` in an .npmrc,
+    `npm_config_prefix`, a distro default). That directory is host-specific,
+    frequently on no PATH, and covered by no list of well-known directories, so
+    the resolve step that followed reported the CLI absent — identically on every
+    retry, with the CLI sitting on disk.
+
+    Pinning `--prefix` makes the location known by construction, which is also
+    what keeps external configuration out of the decision about which executable
+    the gateway later spawns.
+    """
+
+    @staticmethod
+    def _launcher_name() -> str:
+        """The launcher's on-disk name for THIS platform.
+
+        `shutil.which` is PATHEXT-aware on Windows, where an extensionless file is
+        not executable — so a fixture writing a bare `playwright-cli` there is
+        invisible to the very lookup under test. npm writes a `.cmd` wrapper on
+        Windows, which is what this mirrors.
+        """
+        return mod.CLI_BIN + (".cmd" if platform_compat.IS_WINDOWS else "")
+
+    def _install_launcher(self, prefix: Path) -> Path:
+        bin_dir = prefix if platform_compat.IS_WINDOWS else prefix / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        launcher = bin_dir / self._launcher_name()
+        launcher.write_text("")
+        launcher.chmod(0o755)
+        return launcher
+
+    @staticmethod
+    def _same_path(a: str | None, b: Path) -> bool:
+        """Whether *a* names the same file as *b*, tolerating Windows spelling.
+
+        `shutil.which` returns the extension in the casing PATHEXT declares, so on
+        Windows it answers `playwright-cli.CMD` for a file written as `.cmd`.
+        `normcase` folds case and separator flavour there, and is a no-op on POSIX.
+        """
+        return a is not None and os.path.normcase(a) == os.path.normcase(str(b))
+
+    def test_the_prefix_is_the_data_home_by_default(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(mod, "config_dir", lambda: tmp_path)
+        monkeypatch.delenv(mod._STANDALONE_PREFIX_ENV, raising=False)
+
+        assert mod.managed_prefix() == tmp_path / "playwright-cli"
+
+    def test_an_operator_may_relocate_the_prefix(self, monkeypatch, tmp_path):
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(tmp_path / "elsewhere"))
+
+        assert mod.managed_prefix() == tmp_path / "elsewhere"
+
+    def test_the_bin_dir_follows_the_platform_layout(self, monkeypatch, tmp_path):
+        """npm links into `<prefix>/bin` on POSIX and `<prefix>` on Windows."""
+        monkeypatch.setattr(mod, "config_dir", lambda: tmp_path)
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(tmp_path / mod._STANDALONE_PREFIX_DIR))
+        pw = tmp_path / mod._STANDALONE_PREFIX_DIR
+        expected = pw if platform_compat.IS_WINDOWS else pw / "bin"
+
+        assert mod.managed_prefix_bin_dir() == expected
+
+    def test_the_install_pins_the_prefix_on_argv(self, monkeypatch, tmp_path):
+        """The fix itself: npm is told where to install, not asked afterwards."""
+        monkeypatch.setattr(mod, "config_dir", lambda: tmp_path)
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(tmp_path / mod._STANDALONE_PREFIX_DIR))
+        self._install_launcher(tmp_path / mod._STANDALONE_PREFIX_DIR)
+        monkeypatch.setattr(mod.os_deps, "with_deps_supported", lambda: False)
+        monkeypatch.setattr(mod.os_deps, "missing_deps_hint", lambda: "")
+        monkeypatch.setattr(
+            mod, "find_node_tool", lambda name, base_path=None: "/n/npm" if name == "npm" else None
+        )
+        calls: list[list[str]] = []
+        monkeypatch.setattr(
+            mod, "_run", lambda argv, timeout: (calls.append(list(argv)), (0, "", ""))[1]
+        )
+
+        result = mod.install()
+
+        assert result["ok"] is True
+        install_argv = calls[0]
+        assert install_argv[:4] == ["/n/npm", "install", "-g", "--prefix"]
+        assert install_argv[4] == str(tmp_path / mod._STANDALONE_PREFIX_DIR)
+        assert install_argv[5] == mod.NPM_SPEC
+
+    def test_cli_path_resolves_from_the_managed_prefix(self, monkeypatch, tmp_path):
+        """Nothing on PATH, yet the launcher we installed is still found."""
+        monkeypatch.setattr(mod, "config_dir", lambda: tmp_path)
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(tmp_path / mod._STANDALONE_PREFIX_DIR))
+        launcher = self._install_launcher(tmp_path / mod._STANDALONE_PREFIX_DIR)
+        monkeypatch.setattr(mod, "find_node_tool", lambda name, base_path=None: None)
+
+        assert self._same_path(mod.cli_path(), launcher)
+
+    def test_the_managed_prefix_never_outranks_an_ordinary_hit(self, monkeypatch, tmp_path):
+        """Last tier means last: it resolves only a name found nowhere else."""
+        monkeypatch.setattr(mod, "config_dir", lambda: tmp_path)
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(tmp_path / mod._STANDALONE_PREFIX_DIR))
+        self._install_launcher(tmp_path / mod._STANDALONE_PREFIX_DIR)
+        monkeypatch.setattr(mod, "find_node_tool", lambda name, base_path=None: "/n/playwright-cli")
+
+        assert mod.cli_path() == "/n/playwright-cli"
+
+    def test_an_absent_prefix_resolves_to_nothing(self, monkeypatch, tmp_path):
+        """A fenced but empty prefix: nothing to resolve, and no error either."""
+        monkeypatch.setattr(mod, "config_dir", lambda: tmp_path)
+        monkeypatch.delenv(mod._STANDALONE_PREFIX_ENV, raising=False)
+        monkeypatch.setattr(mod, "find_node_tool", lambda name, base_path=None: None)
+
+        assert mod.managed_prefix_is_fenceable() is True
+        assert mod.cli_path() is None
+
+    def test_the_revision_probe_reads_the_same_prefix(self, monkeypatch, tmp_path):
+        """One directory, not two: the install and the revision check must agree."""
+        monkeypatch.setattr(mod, "config_dir", lambda: tmp_path)
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(tmp_path / mod._STANDALONE_PREFIX_DIR))
+
+        roots = mod._standalone_node_modules()
+
+        assert tmp_path / mod._STANDALONE_PREFIX_DIR / "lib" / "node_modules" in roots
+        assert tmp_path / mod._STANDALONE_PREFIX_DIR / "node_modules" in roots
+
+    def test_an_unresolvable_install_names_the_prefix_it_installed_into(
+        self, monkeypatch, tmp_path
+    ):
+        """The residual failure must say WHERE it put things, not just that it failed."""
+        monkeypatch.setattr(mod, "config_dir", lambda: tmp_path)
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(tmp_path / mod._STANDALONE_PREFIX_DIR))
+        monkeypatch.setattr(
+            mod, "find_node_tool", lambda name, base_path=None: "/n/npm" if name == "npm" else None
+        )
+        monkeypatch.setattr(mod, "_run", lambda argv, timeout: (0, "", ""))
+
+        result = mod.install()
+
+        assert result["ok"] is False
+        step = result["steps"][-1]
+        assert step["name"] == "resolve-binary"
+        assert str(mod.managed_prefix_bin_dir()) in step["stderr"]
+        assert "searched" in step["stderr"]
+
+    def test_a_prefix_outside_the_data_home_is_not_trusted(self, monkeypatch, tmp_path):
+        """Refuse to TRUST, not refuse to run: the tier is skipped, nothing breaks.
+
+        The prefix supplies an executable the gateway spawns, so it is only worth
+        resolving from while it sits inside the tree fenced against agent writes.
+        An operator may still point the override anywhere — they just lose this
+        fallback lookup, and a CLI on PATH is still found by the first tier.
+        """
+        outside = tmp_path / "outside"
+        self._install_launcher(outside)
+        monkeypatch.setattr(mod, "config_dir", lambda: tmp_path / "crew")
+        (tmp_path / "crew").mkdir()
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(outside))
+        monkeypatch.setattr(mod, "find_node_tool", lambda name, base_path=None: None)
+
+        assert mod.managed_prefix_is_fenceable() is False
+        assert mod.cli_path() is None
+
+    def test_a_differently_named_in_home_override_is_not_trusted(self, monkeypatch, tmp_path):
+        """Inside the data home is NOT the rule — the fence seals one leaf name.
+
+        Both AI reviews caught this: `_WRITE_PROTECTED_HOME_PATHS` adds
+        `<crew home>/playwright-cli` and `_CREW_READONLY_LEAVES` carries the same
+        literal, so `<crew home>/elsewhere` is inside the home and outside the
+        fence. Trusting it by containment would have let a sandboxed turn write a
+        launcher that `detect()` then spawns from the gateway. An earlier revision
+        of this test asserted the opposite and was wrong.
+        """
+        crew = tmp_path / "crew"
+        inside = crew / "elsewhere"
+        self._install_launcher(inside)
+        monkeypatch.setattr(mod, "config_dir", lambda: crew)
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(inside))
+        monkeypatch.setattr(mod, "find_node_tool", lambda name, base_path=None: None)
+
+        assert mod.managed_prefix_is_fenceable() is False
+        assert mod.cli_path() is None
+
+    def test_the_canonical_prefix_is_trusted(self, monkeypatch, tmp_path):
+        """The one shape both gates seal, named explicitly rather than by default."""
+        crew = tmp_path / "crew"
+        canonical = crew / mod._STANDALONE_PREFIX_DIR
+        self._install_launcher(canonical)
+        monkeypatch.setattr(mod, "config_dir", lambda: crew)
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(canonical))
+        monkeypatch.setattr(mod, "find_node_tool", lambda name, base_path=None: None)
+
+        assert mod.managed_prefix_is_fenceable() is True
+        assert mod.cli_path() is not None
+
+    @pytest.mark.skipif(platform_compat.IS_WINDOWS, reason="symlink creation needs privilege")
+    def test_a_symlinked_prefix_is_not_trusted(self, monkeypatch, tmp_path):
+        """A read-only bind seals the target inode; the link NAME stays writable.
+
+        So the seal would report success while a sandboxed process replaced the
+        name with a directory of its own.
+        """
+        crew = tmp_path / "crew"
+        crew.mkdir()
+        target = tmp_path / "target"
+        self._install_launcher(target)
+        (crew / "playwright-cli").symlink_to(target)
+        monkeypatch.setattr(mod, "config_dir", lambda: crew)
+        monkeypatch.delenv(mod._STANDALONE_PREFIX_ENV, raising=False)
+        monkeypatch.setattr(mod, "find_node_tool", lambda name, base_path=None: None)
+
+        assert mod.managed_prefix_is_fenceable() is False
+        assert mod.cli_path() is None
+
+    def test_an_unfenceable_prefix_fails_loudly_with_the_remedy(self, monkeypatch, tmp_path):
+        """Silence is the failure mode to avoid: the install went where asked."""
+        outside = tmp_path / "outside"
+        self._install_launcher(outside)
+        monkeypatch.setattr(mod, "config_dir", lambda: tmp_path / "crew")
+        (tmp_path / "crew").mkdir()
+        monkeypatch.setenv(mod._STANDALONE_PREFIX_ENV, str(outside))
+        monkeypatch.setattr(
+            mod, "find_node_tool", lambda name, base_path=None: "/n/npm" if name == "npm" else None
+        )
+        monkeypatch.setattr(mod, "_run", lambda argv, timeout: (0, "", ""))
+
+        result = mod.install()
+
+        step = result["steps"][-1]
+        assert step["name"] == "resolve-binary"
+        assert "is not the fenced prefix" in step["stderr"]
+        # Names the ONE path that is trusted, rather than the old and now-wrong
+        # advice to put the override "inside the data home".
+        assert str(tmp_path / "crew" / mod._STANDALONE_PREFIX_DIR) in step["stderr"]
+        assert "KIROCREW_HOME" in step["stderr"]
+
+    def test_the_default_prefix_is_fenceable(self, monkeypatch, tmp_path):
+        """The shape every ordinary install has, including before it exists."""
+        monkeypatch.setattr(mod, "config_dir", lambda: tmp_path)
+        monkeypatch.delenv(mod._STANDALONE_PREFIX_ENV, raising=False)
+
+        assert mod.managed_prefix_is_fenceable() is True

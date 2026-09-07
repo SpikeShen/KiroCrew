@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 from collections.abc import Callable
 from functools import lru_cache
@@ -34,7 +35,12 @@ from typing import Any
 from kiro_crew import platform_compat
 from kiro_crew.browser_cli import os_deps
 from kiro_crew.config.paths import config_dir
-from kiro_crew.env import augmented_path, find_node_tool, node_augmented_path
+from kiro_crew.env import (
+    augmented_path,
+    describe_search_path,
+    find_node_tool,
+    node_augmented_path,
+)
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 
 logger = logging.getLogger(__name__)
@@ -136,8 +142,38 @@ def cli_path() -> str | None:
     inherit it on ``$PATH``. Without this the standalone install would SUCCEED
     and the panel would keep reporting the CLI as absent -- the worst shape of
     failure available here, since nothing errors and the offer never withdraws.
+
+    A THIRD location is consulted last: :func:`managed_prefix_bin_dir`, the bin dir
+    of the prefix THIS MODULE installs into, and only while
+    :func:`managed_prefix_is_fenceable` holds -- the prefix supplies an executable
+    the gateway spawns, so it is worth resolving from only while it sits inside the
+    tree fenced against agent writes. :func:`install` pins that prefix rather than
+    letting npm's configuration choose one, so the launcher's location is known by
+    construction -- which is what removes the guessing this function used to have
+    to do. It is consulted last so it only ever resolves a name found nowhere
+    else, and it is a pure path computation, so the repeated presence probes
+    (:func:`available`, :func:`detect`, the panel) stay subprocess-free.
+
+    Deliberately NOT contributed to :func:`kiro_crew.env.augmented_path`: that
+    function's invariant keeps contributed directories out of the search it shares
+    with the resolvers for the trusted agent runtime. A fixed product-owned
+    directory is a materially different proposition from an ``.npmrc``-nameable
+    one, but it is still a trust question for that search, so a bare-name
+    ``playwright-cli`` in an agent shell remains unresolved from here pending that
+    ruling.
     """
-    return find_node_tool(CLI_BIN, base_path=augmented_path(os.environ.get("PATH", "")))
+    found = find_node_tool(CLI_BIN, base_path=augmented_path(os.environ.get("PATH", "")))
+    if found is not None:
+        return found
+    if not managed_prefix_is_fenceable():
+        logger.debug(
+            "not resolving %s from %s: the prefix is outside the fenced data home "
+            "or reached through a symlink",
+            CLI_BIN,
+            managed_prefix(),
+        )
+        return None
+    return shutil.which(CLI_BIN, path=str(managed_prefix_bin_dir()))
 
 
 def _first_version(text: str) -> str | None:
@@ -220,16 +256,88 @@ _PLAYWRIGHT_CORE_PKG = "playwright-core"
 _CLI_PKG_SCOPE = "@playwright"
 _CLI_PKG_NAME = "cli"
 
-#: Where the standalone installer puts the package tree. `npm --global --prefix`
-#: writes under ``<prefix>/lib/node_modules`` on POSIX and ``<prefix>/node_modules``
-#: on Windows, so both are probed.
+#: Where this module installs the CLI, and where the shell installer puts it too.
+#: `npm --global --prefix` writes the package under ``<prefix>/lib/node_modules``
+#: on POSIX and ``<prefix>/node_modules`` on Windows, so both are probed.
 _STANDALONE_PREFIX_ENV = "KIROCREW_PLAYWRIGHT_CLI_HOME"
 _STANDALONE_PREFIX_DIR = "playwright-cli"
 _NODE_MODULES = "node_modules"
 
 
+def managed_prefix() -> Path:
+    """The npm prefix this product installs the CLI into.
+
+    Fixed and product-owned -- the data home, or an operator's
+    ``KIROCREW_PLAYWRIGHT_CLI_HOME`` -- rather than whatever npm's configuration
+    names. :func:`install` pins it, so the launcher's location is decided here
+    rather than discovered afterwards; the shell installer (``playwright-cli.sh``)
+    already defaults to the same directory, so both install paths converge.
+
+    Why not npm's own global prefix: it is CONFIGURATION (``prefix`` in an
+    .npmrc, ``npm_config_prefix``, a distro default), so it varies per host, no
+    list of well-known directories can cover it, and resolving from it means
+    trusting a directory that configuration can point anywhere.
+    """
+    override = os.environ.get(_STANDALONE_PREFIX_ENV, "").strip()
+    return Path(override) if override else config_dir() / _STANDALONE_PREFIX_DIR
+
+
+def managed_prefix_bin_dir() -> Path:
+    """Where a ``--prefix`` install lands the launcher.
+
+    ``<prefix>/bin`` on POSIX; ``<prefix>`` itself on Windows, where npm writes
+    the ``.cmd`` wrapper into the prefix root instead of a ``bin`` subdirectory.
+    """
+    prefix = managed_prefix()
+    return prefix if platform_compat.IS_WINDOWS else prefix / "bin"
+
+
+def managed_prefix_is_fenceable() -> bool:
+    """Whether :func:`managed_prefix` is the ONE path both write gates seal.
+
+    Fenceability is not containment. The fence is keyed to a literal leaf NAME --
+    ``_WRITE_PROTECTED_HOME_PATHS`` adds ``<crew home>/playwright-cli`` and
+    ``_CREW_READONLY_LEAVES`` carries ``"playwright-cli"`` -- because a static leaf
+    under a known home prefix is what a seal built at spawn time can express. So
+    membership of the data home is NOT enough: a differently-named directory in
+    there is inside the home and outside the fence.
+
+    The prefix supplies an executable the gateway SPAWNS, so only the canonical,
+    actually-sealed path is worth resolving from. Three shapes are refused:
+
+    * an override (``KIROCREW_PLAYWRIGHT_CLI_HOME``) pointing OUTSIDE the data
+      home. The fence is expressed as a path within the data home, so bytes over
+      there are simply not covered by it;
+    * an override naming a DIFFERENT directory inside the data home. It is not the
+      leaf either gate seals, so a sandboxed turn may write there while the
+      gateway would execute what it finds -- the exposure both AI reviews caught,
+      and the reason this predicate is an equality rather than a containment test;
+    * a SYMLINK at the prefix itself. A read-only bind covers the inode it
+      resolves to, but the link NAME lives in the writable data home, so a
+      sandboxed process can unlink it and put a directory of its own in its
+      place -- the seal would still report success while the executable changed.
+
+    Refusing to TRUST rather than refusing to run: an unfenceable prefix skips
+    this module's last resolution tier and nothing else. Agent turns still start,
+    :func:`install` still installs there, and a CLI installed anywhere on ``PATH``
+    is still found by the first tier, so an operator who relocated the tree loses
+    a fallback lookup, not the product. To relocate and STAY covered, move
+    ``KIROCREW_HOME``: the fence is anchored to the home, so it travels with it.
+    """
+    prefix = managed_prefix()
+    try:
+        if prefix.is_symlink():
+            return False
+        canonical = config_dir().resolve() / _STANDALONE_PREFIX_DIR
+        resolved = prefix.resolve()
+    except OSError:
+        # Cannot establish where it is, so cannot establish that it is fenced.
+        return False
+    return resolved == canonical
+
+
 def _standalone_node_modules() -> list[Path]:
-    """``node_modules`` roots of a standalone (unprivileged) CLI install.
+    """``node_modules`` roots of an install under :func:`managed_prefix`.
 
     Probed by KNOWN PATH rather than found by searching, because the standalone
     installer generates a **wrapper script** instead of a symlink: the package
@@ -238,8 +346,7 @@ def _standalone_node_modules() -> list[Path]:
     for that install shape at all, and the check would silently degrade to the
     presence-only answer whose false positives it exists to remove.
     """
-    prefix_override = os.environ.get(_STANDALONE_PREFIX_ENV, "").strip()
-    prefix = Path(prefix_override) if prefix_override else config_dir() / _STANDALONE_PREFIX_DIR
+    prefix = managed_prefix()
     return [prefix / "lib" / _NODE_MODULES, prefix / _NODE_MODULES]
 
 
@@ -770,22 +877,49 @@ def install() -> dict[str, Any]:
         )
         return {"ok": False, "steps": steps}
 
+    # ``--prefix`` is the whole fix: without it npm installs into whatever prefix
+    # its CONFIGURATION names (`prefix` in an .npmrc, `npm_config_prefix`, a
+    # distro default), which is host-specific, frequently on no PATH, and covered
+    # by no list of well-known directories -- so the step below exited 0 while the
+    # launcher landed somewhere nothing looked, and the install read as a failure
+    # on every retry. Pinning it makes the location known by construction. The
+    # shell installer (``playwright-cli.sh``) already does exactly this, so the
+    # two install paths now converge on one directory.
+    prefix = managed_prefix()
     steps.append(
-        _step("npm-install-global", [npm, "install", "-g", NPM_SPEC], _NPM_INSTALL_TIMEOUT_S)
+        _step(
+            "npm-install-global",
+            [npm, "install", "-g", "--prefix", str(prefix), NPM_SPEC],
+            _NPM_INSTALL_TIMEOUT_S,
+        )
     )
     if not steps[-1]["ok"]:
         return {"ok": False, "steps": steps}
 
-    # Resolved after the global install, not before: the binary does not exist
-    # until that step succeeds.
+    # Resolved after the install, not before: the binary does not exist until that
+    # step succeeds.
     path = cli_path()
     if path is None:
+        searched = describe_search_path(augmented_path(os.environ.get("PATH", "")))
+        if managed_prefix_is_fenceable():
+            where = f"not found after a successful install into {managed_prefix_bin_dir()}"
+        else:
+            # Loud rather than silent: the install went where the operator asked,
+            # and the reason it is not trusted afterwards is a property of WHERE
+            # that is, not of the install. Naming the one trusted path, because
+            # "inside the data home" is NOT the rule -- the fence seals one leaf.
+            where = (
+                f"installed into {managed_prefix()}, which is not the fenced prefix "
+                f"{config_dir() / _STANDALONE_PREFIX_DIR} (or is reached through a "
+                f"symlink), so it is not resolved from. Unset {_STANDALONE_PREFIX_ENV}, "
+                f"or relocate KIROCREW_HOME so the fence moves with it"
+            )
         steps.append(
             {
                 "name": "resolve-binary",
                 "ok": False,
                 "returncode": 127,
-                "stderr": f"{CLI_BIN} not found on PATH after a successful global install",
+                "stderr": f"{CLI_BIN} {where}; {searched}",
             }
         )
         return {"ok": False, "steps": steps}
