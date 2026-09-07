@@ -23,6 +23,7 @@ from kiro_crew.acp.client import AcpError, AcpPromptBusy, advertised_model_ids
 from kiro_crew.acp.types import EVENT_STEER_CONSUMED, TurnUsage
 from kiro_crew.config.loader import KiroCrewConfig
 from kiro_crew.hooks import fire_tool_hooks, get_global_hook_store
+from kiro_crew.platform.tool_paths import target_paths
 from kiro_crew.providers.base import (
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
@@ -37,6 +38,7 @@ from kiro_crew.security import (
     is_denied,
     is_sensitive_bash_command,
     is_sensitive_path,
+    is_sensitive_write_path,
     redact_credentials,
     redact_exfiltration_urls,
 )
@@ -949,6 +951,49 @@ def _title_denial(
     deny_reason = is_denied(title, denied_regexes=denied_regexes)
     if deny_reason:
         return ("regex", deny_reason)
+    return None
+
+
+# ACP semantic kind of a file write/edit (fs_write / code). Same literal
+# ``hooks._EDIT_TOOL_KIND`` and ``acp._dispatch`` key their edit handling on.
+_EDIT_TOOL_KIND = "edit"
+
+
+def _edit_target_denial(raw_params: dict | None) -> tuple[str, str, str] | None:
+    """The always-enforced denial for a file-EDIT tool call, or ``None``.
+
+    An edit's ``tool_input`` is a DOCUMENT: ``_dispatch.derive_edit_diff`` renders
+    the file's new content (or a strReplace pair) as a unified diff, and that text
+    is what ``event.tool_input`` carries. Handing it to :func:`_first_tool_input_denial`
+    read the document as a shell command line, so writing a Markdown page that says
+    ``git push origin main``, a docstring that says ``kirocrew restart``, or prose
+    that names ``~/.ssh`` was refused -- and a body over
+    :data:`_MAX_SCANNABLE_TOOL_INPUT_CHARS` was refused for its LENGTH (#8812). That
+    is the same defect class #9082 closed for cron script bodies: a document is not
+    the shell gate's subject.
+
+    What an edit can actually do is decided by WHERE it writes, so the gate for an
+    edit is the resolved target path, exactly as ``hooks.on_tool_call`` decides it:
+    every accepted path spelling in the params (``target_paths``) goes through
+    :func:`is_sensitive_write_path`, which is the read+write keystone PLUS the
+    write-only tier (config, the agents dir). A walk that hit its work cap is
+    denied as unverifiable, mirroring the hook gate's fail-closed shape. The
+    title-tier scan of the request still runs before this, unchanged.
+
+    Fail-closed on missing params: an edit that carries no ``raw_tool_params`` at
+    all has no target to judge, so the caller falls back to the document scan
+    rather than approving blind.
+    """
+    paths = target_paths(raw_params)
+    if paths.truncated:
+        return (
+            "path",
+            "Blocked: tool arguments too large to verify for sensitive paths " "(deny-by-default)",
+            "",
+        )
+    for path in paths:
+        if is_sensitive_write_path(path):
+            return ("path", f"Blocked: write to protected path: {path}", path)
     return None
 
 
@@ -2135,7 +2180,20 @@ async def _resolve_permission(
     # (kiro-cli convention), but tool_input may contain additional arguments or
     # the actual path when the title is a generic tool name (e.g. "Read", "Bash").
     _tool_input = event.tool_input or ""
-    _input_strings = _extract_tool_input_strings(_tool_input) if _tool_input else []
+    # A file EDIT's tool_input is the document being written, not a command
+    # line; its gate is the target path (see _edit_target_denial). Only when the
+    # backend supplied the params -- otherwise there is no path to judge and the
+    # document scan stays as the fail-closed fallback.
+    _edit_params = (
+        event.raw_tool_params
+        if event.tool_kind == _EDIT_TOOL_KIND and isinstance(event.raw_tool_params, dict)
+        else None
+    )
+    _input_strings = (
+        []
+        if _edit_params is not None
+        else (_extract_tool_input_strings(_tool_input) if _tool_input else [])
+    )
 
     def _scan_off_loop() -> tuple[str, str, str, str] | None:
         # One worker hop for the title and the whole tool_input loop. Both are
@@ -2152,6 +2210,10 @@ async def _resolve_permission(
         title_hit = _title_denial(normalized, _denied_regexes)
         if title_hit is not None:
             return (title_hit[0], title_hit[1], normalized, "always_deny")
+        if _edit_params is not None:
+            edit_hit = _edit_target_denial(_edit_params)
+            if edit_hit is not None:
+                return (*edit_hit, "always_deny_input")
         if _input_strings:
             input_hit = _first_tool_input_denial(_input_strings, _denied_regexes)
             if input_hit is not None:

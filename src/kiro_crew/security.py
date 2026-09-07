@@ -10681,8 +10681,18 @@ _TRUST_ROOT_READ_LISTERS: frozenset[str] = frozenset(
 #
 # So the set is deliberately tiny: letters, digits, and the punctuation a path or
 # a flag actually needs.  Everything else is out, including quotes, ``$``,
-# backslash, glob characters and every bracket -- a bare read listing needs none
-# of them.
+# backslash and every bracket -- a bare read listing needs none of them.
+#
+# The two glob wildcards ``*`` and ``?`` ARE admitted, and only they.  Pathname
+# expansion is the one shell feature that cannot change WHAT the program does:
+# it rewrites the argument list into more path words and nothing else, and a
+# read lister handed more paths is still a read lister.  Excluding them refused
+# ``ls -d ~/.kiro/crew/scratch/runtime-*/x`` -- the agent's own scratch tree,
+# listed with the only flag that shows a directory entry -- which was a live
+# refusal on every session that kept per-runtime scratch.  ``[`` stays out
+# (bracket classes are globs too, but ``[`` is also ``test``, and telling them
+# apart is the inference this rule refuses to make), as do ``{``/``}`` (brace
+# expansion is not a glob and can spell a word the matcher never saw).
 #
 # ``$HOME`` is the ONE exception, stripped before the check, because the
 # destination half of this rule enumerates that spelling itself
@@ -10704,7 +10714,7 @@ _TRUST_ROOT_READ_LISTERS: frozenset[str] = frozenset(
 # own anchored spelling and cannot be moved out from under by an edit to the
 # other one.
 _TRUST_ROOT_HOME_VAR_RE = re.compile(r"\$HOME(?=[/\s]|\Z)")
-_SHELL_INERT_COMMAND_RE = re.compile(r"\A[A-Za-z0-9_@%+=:,./~^ \t-]+\Z")
+_SHELL_INERT_COMMAND_RE = re.compile(r"\A[A-Za-z0-9_@%+=:,./~^*? \t-]+\Z")
 
 
 def _is_bare_trust_root_read(command: str) -> bool:
@@ -15208,6 +15218,26 @@ _BASH_EXFIL_RES: list[tuple[re.Pattern[str], str]] = [
 # Which catalog rule each always-on exfil branch enforces, so a denial maps back
 # to a rule id and an operator opt-out is honoured. Patterns/labels absent from
 # these maps stay unconditional.
+#
+# The curl-option spellings are also REQUIRED TO NAME CURL. Every one of them is a
+# flag whose meaning ("read this argument from a file and send it") exists only
+# on the curl command line; as a bare substring the same bytes are ordinary
+# elsewhere -- ``date -d @1787864713`` is an epoch, ``gh api -F body=@disp.md``
+# is a form field GitHub reads locally, ``grep "'-d @'" security.py`` is this
+# very table. Each of those was a live refusal on an agent doing repo work. The
+# catalog rules these branches enforce (``data-exfil-curl-*``) already spell
+# ``.*curl.*`` in their own patterns, so the word test is the catalog's own
+# contract applied to the fast path, not a new carve-out. ``wget --post-file``
+# carries its verb in the pattern already; ``/dev/tcp/`` is a bash builtin path
+# and has no verb to bind to.
+_CURL_WORD_RE = re.compile(r"\bcurl\b", re.IGNORECASE)
+_CURL_BOUND_EXFIL_RULE_IDS: frozenset[str] = frozenset(
+    {
+        "data-exfil-curl-file-body",
+        "data-exfil-curl-multipart-upload",
+        "data-exfil-curl-upload",
+    }
+)
 _BASH_EXFIL_RULE_BY_PATTERN: dict[str, str] = {
     "-d @": "data-exfil-curl-file-body",
     "-d@": "data-exfil-curl-file-body",
@@ -15278,6 +15308,7 @@ def audit_bash_exfiltration(
     vetting, computer-use input vetting) at full strength without a change.
     """
     lower = command.lower()
+    names_curl = _CURL_WORD_RE.search(command) is not None
 
     def _on(rule_id: str) -> bool:
         return enabled_ids is None or rule_id in enabled_ids
@@ -15285,6 +15316,10 @@ def audit_bash_exfiltration(
     for pattern in _BASH_EXFIL_PATTERNS:
         rule_id = _BASH_EXFIL_RULE_BY_PATTERN.get(pattern, "")
         if rule_id and not _on(rule_id):
+            continue
+        if rule_id in _CURL_BOUND_EXFIL_RULE_IDS and not names_curl:
+            # A curl flag with no curl on the line is some other program's
+            # argument (see _CURL_BOUND_EXFIL_RULE_IDS).
             continue
         pat = pattern.lower()
         if "*" in pat:
