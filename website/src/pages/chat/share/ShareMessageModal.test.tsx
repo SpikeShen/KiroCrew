@@ -24,8 +24,49 @@ describe('ShareMessageModal', () => {
         messageText={over.messageText ?? 'Triaged 47 issues overnight and opened two PRs.'}
         prevUserText={over.prevUserText}
         shareEnabled={over.shareEnabled ?? true}
+        copy={over.copy}
       />,
     )
+
+  it('uses the chat wording when no copy override is given', () => {
+    // The load-bearing half for every existing call site: the defaults ARE the chat
+    // strings, so omitting `copy` must change nothing about this dialog.
+    renderModal({ prevUserText: 'How many issues did you triage?' })
+    expect(screen.getByText('Turn this reply into a share card you can post anywhere.'))
+      .toBeInTheDocument()
+    expect(screen.getByText('Include my question')).toBeInTheDocument()
+  })
+
+  it('lets a non-chat host replace the two strings that name the shared thing', () => {
+    // A surface sharing something that is not a reply needs its own wording; the chat
+    // defaults assert a reply and a question it does not have.
+    renderModal({
+      prevUserText: 'Feature videos',
+      copy: {
+        description: 'Turn this feature video into a share card you can post anywhere.',
+        includeQuestion: 'Include the video title',
+      },
+    })
+    expect(screen.getByText('Turn this feature video into a share card you can post anywhere.'))
+      .toBeInTheDocument()
+    expect(screen.getByText('Include the video title')).toBeInTheDocument()
+    // The defaults must be gone, not merely joined.
+    expect(screen.queryByText('Turn this reply into a share card you can post anywhere.'))
+      .not.toBeInTheDocument()
+    expect(screen.queryByText('Include my question')).not.toBeInTheDocument()
+  })
+
+  it('leaves the sharing mechanics copy alone when overridden', () => {
+    // Only the two subject-naming strings are parameterised. The export controls and
+    // the policy/limit copy describe the mechanics and are identical on every surface.
+    renderModal({
+      prevUserText: 'Feature videos',
+      copy: { description: 'Custom subtitle', includeQuestion: 'Custom checkbox' },
+    })
+    expect(screen.getByText('Share to social media')).toBeInTheDocument()
+    expect(screen.getByTestId('share-download')).toBeInTheDocument()
+    expect(screen.getByTestId('share-x')).toBeInTheDocument()
+  })
 
   it('renders the card with the message excerpt and a prefilled caption', () => {
     renderModal()
